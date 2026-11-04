@@ -178,9 +178,9 @@ if result:
                     sent = notify_developer(row)
                     st.success("Saved and sent. Thank you!" if sent else "Saved. Thank you!")
 
-data = feedback_csv_bytes()
-if data:
-    st.divider()
-    st.download_button("⬇️ Download all reviews (CSV)", data, "feedback.csv", "text/csv")
-    st.caption("Tip: on the free hosted version, saved reviews can disappear when the app "
-               "restarts, so download them regularly and send the file to the developer.")
+# data = feedback_csv_bytes()
+# if data:
+#     st.divider()
+#     st.download_button("⬇️ Download all reviews (CSV)", data, "feedback.csv", "text/csv")
+#     st.caption("Tip: on the free hosted version, saved reviews can disappear when the app "
+#                "restarts, so download them regularly and send the file to the developer.")
