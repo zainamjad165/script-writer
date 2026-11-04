@@ -1,0 +1,38 @@
+[
+  {
+    "note": "Starter example written as a placeholder. Replace with real expert scripts.",
+    "language": "English",
+    "length": "30 seconds",
+    "brief": {
+      "product": "Insulated steel water bottle",
+      "audience": "Students and office workers",
+      "qualities": ["Keeps drinks cold for 24 hours", "Leak-proof lid", "Fits in bag side pocket"],
+      "offer": "Free delivery this week"
+    },
+    "script": "Tired of lukewarm water by lunchtime? Meet the steel bottle that keeps your drink ice-cold for 24 hours. The lid is fully leak-proof, so your books and laptop stay safe. And it slides right into your bag's side pocket. Order this week and get free delivery. Tap the link and grab yours today."
+  },
+  {
+    "note": "Starter example written as a placeholder. Replace with real expert scripts.",
+    "language": "Roman Urdu",
+    "length": "30 seconds",
+    "brief": {
+      "product": "Cotton summer kurta for men",
+      "audience": "Young men in Pakistan",
+      "qualities": ["Soft breathable cotton", "Does not shrink after wash", "Sizes S to XXL"],
+      "offer": "Cash on delivery available"
+    },
+    "script": "Garmi mein kapray chipakne se tang aa gaye? Ye cotton kurta bilkul halka aur breathable hai, poora din araam deta hai. Dhone ke baad sikarta bhi nahi, aur S se XXL tak har size mojood hai. Cash on delivery bhi available hai. Abhi order karein, link neeche hai."
+  },
+  {
+    "note": "Starter example written as a placeholder. Replace with real expert scripts.",
+    "language": "English",
+    "length": "15 seconds",
+    "brief": {
+      "product": "Home bakery chocolate cake",
+      "audience": "Families ordering for birthdays",
+      "qualities": ["Fresh baked on the day", "Real Belgian chocolate"],
+      "offer": "10% off first order"
+    },
+    "script": "Birthday tomorrow and no cake? Ours is baked fresh the same day with real Belgian chocolate. Get 10% off your first order. Message us now."
+  }
+]
