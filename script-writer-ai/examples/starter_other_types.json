@@ -1,0 +1,70 @@
+[
+  {
+    "type": "caption",
+    "note": "Starter example written as a placeholder. Replace with real expert captions.",
+    "language": "English",
+    "length": "Medium",
+    "brief": {
+      "product": "Handmade soy candles",
+      "audience": "Women 20-40 who love cozy homes and gifting",
+      "qualities": ["Burns for 40 hours", "Lavender and vanilla scent", "Gift-ready box"],
+      "offer": "15% off first order"
+    },
+    "script": "Long day? Let the room do the unwinding for you. 🕯️\n\nOur lavender and vanilla soy candle burns for 40 hours, enough for a whole month of quiet evenings.\n\nIt arrives in a gift-ready box, so it's perfect for someone else too (or yourself, no judgment).\n\nGet 15% off your first order. Send us a DM to start.\n\n#soycandles #homefragrance #giftideas #cozyhome #handmade"
+  },
+  {
+    "type": "caption",
+    "note": "Starter example written as a placeholder. Replace with real expert captions.",
+    "language": "Roman Urdu",
+    "length": "Short",
+    "brief": {
+      "product": "Cotton summer kurta for men",
+      "audience": "Young men in Pakistan",
+      "qualities": ["Soft breathable cotton", "Does not shrink"],
+      "offer": "Cash on delivery"
+    },
+    "script": "Garmi mein bhi style aur araam saath saath. 😎 Halka cotton, dhone ke baad sikarta nahi. Cash on delivery available hai, abhi DM karein."
+  },
+  {
+    "type": "ad",
+    "note": "Starter example written as a placeholder. Replace with real expert ads.",
+    "language": "English",
+    "length": "Short",
+    "platform": "Facebook / Instagram ad",
+    "brief": {
+      "product": "Insulated steel water bottle",
+      "audience": "Students and office workers",
+      "qualities": ["Cold for 24 hours", "Leak-proof lid"],
+      "offer": "Free delivery this week"
+    },
+    "script": "HEADLINE: Ice-cold water all day\nPRIMARY TEXT: Warm water by lunchtime? This steel bottle keeps drinks cold for 24 hours, and the leak-proof lid keeps your bag dry. Free delivery this week.\nCALL TO ACTION: Order Now"
+  },
+  {
+    "type": "ad",
+    "note": "Starter example written as a placeholder. Replace with real expert ads.",
+    "language": "English",
+    "length": "Short",
+    "platform": "Google search ad",
+    "brief": {
+      "product": "Home bakery chocolate cake",
+      "audience": "Families ordering birthday cakes",
+      "qualities": ["Baked fresh on the day", "Real Belgian chocolate"],
+      "offer": "10% off first order"
+    },
+    "script": "HEADLINE 1: Fresh Birthday Cakes\nHEADLINE 2: Baked The Same Day\nHEADLINE 3: 10% Off First Order\nDESCRIPTION 1: Real Belgian chocolate cakes, baked fresh on the day. Order online in minutes.\nDESCRIPTION 2: Birthday tomorrow? Message us today and get 10% off your first cake."
+  },
+  {
+    "type": "product",
+    "note": "Starter example written as a placeholder. Replace with real expert descriptions.",
+    "language": "English",
+    "length": "Standard",
+    "platform": "Own website",
+    "brief": {
+      "product": "Insulated steel water bottle",
+      "audience": "Students and office workers",
+      "qualities": ["Keeps drinks cold for 24 hours", "Leak-proof lid", "Fits bag side pockets"],
+      "offer": ""
+    },
+    "script": "TITLE: Insulated Steel Water Bottle, Cold for 24 Hours\nDESCRIPTION: Stop settling for lukewarm water. This insulated steel bottle keeps your drink ice-cold for a full 24 hours, so the last sip at night is as fresh as the first one in the morning. The leak-proof lid means no more wet books or laptops, even when the bottle is tossed in your bag. Its slim shape slides straight into a side pocket, so it goes wherever you do."
+  }
+]

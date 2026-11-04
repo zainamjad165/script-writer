@@ -4,8 +4,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from prompt import (Brief, VERSION_SEPARATOR, build_prompt, load_examples,
-                    parse_versions, pick_examples)
+from prompt import (COPY_TYPES, VERSION_SEPARATOR, Brief, build_prompt, limit_warnings,
+                    load_examples, load_rules, parse_versions, pick_examples)
 
 
 def make_brief(**kw):
@@ -24,14 +24,12 @@ def test_blank_qualities_dropped():
     assert make_brief().qualities_clean == ["Keeps cold", "Leak-proof"]
 
 
-def test_prompt_contains_brief_and_rules():
+def test_script_prompt_contains_brief_and_rules():
     system, user = build_prompt(make_brief(language="Roman Urdu", length="15 seconds"),
                                 rules="RULE-X", examples=[])
-    assert "RULE-X" in system
-    assert VERSION_SEPARATOR in system
+    assert "RULE-X" in system and VERSION_SEPARATOR in system
     assert "Steel bottle" in user and "Roman Urdu" in user
-    assert "35-45 words" in user
-    assert "Free delivery" in user
+    assert "35-45 words" in user and "Free delivery" in user
 
 
 def test_no_offer_is_not_invented():
@@ -39,17 +37,80 @@ def test_no_offer_is_not_invented():
     assert "do not invent" in user
 
 
-def test_starter_examples_load_and_prefer_language():
+def test_every_copy_type_builds_a_prompt():
+    for key, ct in COPY_TYPES.items():
+        for platform in ct.platforms:
+            system, user = build_prompt(
+                make_brief(copy_type=key, platform=platform, length=ct.default_length,
+                           keywords="candles"), examples=[])
+            assert ct.label in user
+            assert "OUTPUT FORMAT" in system and len(system) > 200
+
+
+def test_caption_toggles():
+    on = build_prompt(make_brief(copy_type="caption", toggles={"hashtags": True, "emojis": False}),
+                      rules="r", examples=[])[1]
+    assert "hashtags" in on and "Do not use any emojis" in on
+    off = build_prompt(make_brief(copy_type="caption", toggles={"hashtags": False}),
+                       rules="r", examples=[])[1]
+    assert "Do not use any hashtags" in off
+
+
+def test_google_ad_format_has_limits():
+    system, _ = build_prompt(make_brief(copy_type="ad", platform="Google search ad"),
+                             rules="r", examples=[])
+    assert "HARD LIMIT 30" in system and "HARD LIMIT 90" in system
+
+
+def test_keywords_only_for_types_that_support_them():
+    assert "Keywords to include" in build_prompt(
+        make_brief(copy_type="product", keywords="steel bottle"), rules="r", examples=[])[1]
+    assert "Keywords to include" not in build_prompt(
+        make_brief(copy_type="script", keywords="steel bottle"), rules="r", examples=[])[1]
+
+
+def test_unknown_type_falls_back_to_script():
+    _, user = build_prompt(make_brief(copy_type="nonsense"), rules="r", examples=[])
+    assert "Video script" in user
+
+
+def test_rules_files_exist_for_every_type():
+    for key in COPY_TYPES:
+        assert load_rules(key), key
+    assert "HOOK" in load_rules("script")
+
+
+def test_examples_are_filtered_by_type_and_language():
     exs = load_examples()
-    assert len(exs) >= 3
-    picked = pick_examples(make_brief(language="Roman Urdu"), exs, limit=1)
-    assert picked[0]["language"] == "Roman Urdu"
+    assert {e.get("type", "script") for e in exs} == set(COPY_TYPES)
+    pick = pick_examples(make_brief(copy_type="caption", language="Roman Urdu"), exs, limit=1)
+    assert pick[0]["type"] == "caption" and pick[0]["language"] == "Roman Urdu"
+    assert all(e.get("type", "script") == "ad"
+               for e in pick_examples(make_brief(copy_type="ad"), exs))
+
+
+def test_every_type_has_a_starter_example():
+    exs = load_examples()
+    for key in COPY_TYPES:
+        assert any(e.get("type", "script") == key for e in exs), key
+
+
+def test_starter_google_ad_respects_limits():
+    for e in load_examples():
+        assert limit_warnings(e["script"], e.get("type", "script"), e.get("platform", "")) == []
+
+
+def test_limit_warnings_catch_overlong_lines():
+    text = "HEADLINE 1: " + "x" * 31 + "\nDESCRIPTION 1: ok\nHEADLINE 2: fine"
+    w = limit_warnings(text, "ad", "Google search ad")
+    assert len(w) == 1 and "31 characters" in w[0]
+    assert limit_warnings(text, "ad", "Facebook / Instagram ad") == []
 
 
 def test_bad_example_file_is_skipped(tmp_path):
     (tmp_path / "bad.json").write_text("{not json")
     (tmp_path / "good.json").write_text(json.dumps(
-        [{"brief": {"product": "x"}, "script": "hello?"}]))
+        [{"brief": {"product": "x"}, "output": "hello?"}]))
     assert len(load_examples(tmp_path)) == 1
 
 

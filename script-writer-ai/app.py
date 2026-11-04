@@ -1,27 +1,22 @@
-"""Script Writer AI - a small Streamlit app that writes short video scripts."""
+"""Copywriter AI - a small Streamlit app that writes short-form marketing copy."""
 from __future__ import annotations
 
-import csv
 import hmac
-import io
 import os
-import requests
 from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
 
+from feedback import feedback_csv_bytes, notify_developer, save_feedback
 from llm import DEFAULT_MODEL, LLMError, generate
 from prompt import (
-    LANGUAGES, LENGTHS, PLATFORMS, TONES, Brief, build_prompt, parse_versions, word_count,
+    COPY_TYPES, LANGUAGES, TONES, Brief, build_prompt, get_copy_type, limit_warnings,
+    parse_versions, word_count,
 )
 
 BASE_DIR = Path(__file__).parent
 FEEDBACK_FILE = BASE_DIR / "feedback" / "feedback.csv"
-FEEDBACK_COLUMNS = [
-    "time", "product", "audience", "qualities", "offer", "language", "length",
-    "tone", "script", "rating", "whats_weak", "expert_rewrite",
-]
 
 
 # ---------- config helpers ----------
@@ -45,53 +40,16 @@ def get_setting(name: str, default: str = "") -> str:
     return os.environ.get(name, default)
 
 
-def save_feedback(row: dict) -> None:
-    FEEDBACK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    new_file = not FEEDBACK_FILE.exists()
-    with FEEDBACK_FILE.open("a", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=FEEDBACK_COLUMNS)
-        if new_file:
-            writer.writeheader()
-        writer.writerow({k: row.get(k, "") for k in FEEDBACK_COLUMNS})
-
-def notify_developer(row: dict) -> bool:
-    """Send a saved review to Discord. Never raises, so saving can't break."""
-    url = get_setting("DISCORD_WEBHOOK_URL")
-    if not url:
-        return False
-    text = (
-        f"📝 New review: {row.get('rating')}/5\n"
-        f"{row.get('product')} | {row.get('language')} | {row.get('length')} | {row.get('tone')}\n\n"
-        f"SCRIPT:\n{row.get('script')}\n\n"
-        f"WEAK: {row.get('whats_weak') or '-'}\n\n"
-        f"HER REWRITE: {row.get('expert_rewrite') or '-'}"
-    ).replace("@", "@\u200b")  # stops @everyone pings from user text
-    try:
-        if len(text) <= 1900:
-            r = requests.post(url, json={"content": text}, timeout=15)
-        else:  # Discord limit is 2000 chars, so attach the full text as a file
-            r = requests.post(url, data={"content": text[:1900] + "…"},
-                              files={"file": ("review.txt", text.encode("utf-8"))}, timeout=15)
-        return r.status_code < 300
-    except requests.RequestException:
-        return False
-
-def feedback_csv_bytes() -> bytes | None:
-    if not FEEDBACK_FILE.exists():
-        return None
-    return FEEDBACK_FILE.read_bytes()
-
-
 # ---------- app ----------
 load_dotenv()
-st.set_page_config(page_title="Script Writer AI", page_icon="🎬", layout="centered")
+st.set_page_config(page_title="Copywriter AI", page_icon="✍️", layout="centered")
 
 
 def password_gate() -> None:
     password = get_setting("APP_PASSWORD")
     if not password or st.session_state.get("authed"):
         return
-    st.title("🎬 Script Writer AI")
+    st.title("✍️ Copywriter AI")
     entered = st.text_input("Password", type="password")
     if entered:
         if hmac.compare_digest(entered, password):
@@ -104,8 +62,8 @@ def password_gate() -> None:
 
 password_gate()
 
-st.title("🎬 Script Writer AI")
-st.caption("Short video scripts: hook question → what it offers → offer & call to action.")
+st.title("✍️ Copywriter AI")
+st.caption("Pick what you need, fill the short form, get ready-to-use copy.")
 
 with st.sidebar:
     st.header("Settings")
@@ -116,28 +74,47 @@ with st.sidebar:
     st.info("Free AI limits are small. If you hit a limit, wait a bit and retry. "
             "Don't enter confidential client details.")
 
+# The type picker sits outside the form so the form below can change with it.
+type_by_label = {ct.label: key for key, ct in COPY_TYPES.items()}
+chosen = st.selectbox("What do you want to write?", list(type_by_label), key="copy_type_label")
+ct = get_copy_type(type_by_label[chosen])
+
 with st.form("brief"):
-    product = st.text_input("What are you selling?*", placeholder="e.g. Cotton summer kurta for men")
-    audience = st.text_input("Who is it for?*", placeholder="e.g. Young men, 18-30, Pakistan")
-    qualities = st.text_area("2-3 main qualities* (one per line)",
+    product = st.text_input("What are you selling?*", key="product",
+                            placeholder="e.g. Cotton summer kurta for men")
+    audience = st.text_input("Who is it for?*", key="audience",
+                             placeholder="e.g. Young men, 18-30, Pakistan")
+    qualities = st.text_area("2-3 main qualities* (one per line)", key="qualities",
                              placeholder="Soft breathable cotton\nDoes not shrink\nSizes S to XXL")
-    offer = st.text_input("Offer or discount (optional)", placeholder="e.g. Free delivery this week")
+    offer = st.text_input("Offer or discount (optional)", key="offer",
+                          placeholder="e.g. Free delivery this week")
     c1, c2 = st.columns(2)
-    language = c1.selectbox("Language", list(LANGUAGES))
-    length = c2.selectbox("Length", list(LENGTHS), index=1)
+    language = c1.selectbox("Language", list(LANGUAGES), key="language")
+    lengths = list(ct.lengths)
+    length = c2.selectbox(ct.length_label, lengths, index=lengths.index(ct.default_length),
+                          key=f"{ct.key}_length")
     c3, c4 = st.columns(2)
-    tone = c3.selectbox("Tone", TONES)
-    platform = c4.selectbox("Platform", PLATFORMS)
+    tone = c3.selectbox("Tone", TONES, key="tone")
+    platform = c4.selectbox("Platform", ct.platforms, key=f"{ct.key}_platform")
+    toggle_values = {}
+    if ct.toggles:
+        for col, (tkey, toggle) in zip(st.columns(len(ct.toggles)), ct.toggles.items()):
+            toggle_values[tkey] = col.checkbox(toggle.label, value=toggle.default,
+                                               key=f"{ct.key}_{tkey}")
+    keywords = (st.text_input(ct.keywords_label, key=f"{ct.key}_keywords")
+                if ct.keywords_label else "")
     with st.expander("More options"):
-        avoid = st.text_input("Words or claims to avoid")
-        extra = st.text_area("Anything else the AI should know?")
-    submitted = st.form_submit_button("Write my script", type="primary", use_container_width=True)
+        avoid = st.text_input("Words or claims to avoid", key="avoid")
+        extra = st.text_area("Anything else the AI should know?", key="extra")
+    submitted = st.form_submit_button(f"Write my {ct.noun}", type="primary",
+                                      use_container_width=True)
 
 if submitted:
     brief = Brief(
         product=product, audience=audience, qualities=qualities.splitlines(), offer=offer,
-        language=language, length=length, tone=tone, platform=platform,
-        avoid=avoid, extra=extra, versions=n_versions,
+        language=language, length=length, tone=tone, platform=platform, avoid=avoid,
+        extra=extra, versions=n_versions, copy_type=ct.key, toggles=toggle_values,
+        keywords=keywords,
     )
     missing = brief.missing()
     if missing:
@@ -156,10 +133,13 @@ if submitted:
 result = st.session_state.get("result")
 if result:
     brief: Brief = result["brief"]
-    st.subheader("Your scripts")
-    for i, script in enumerate(result["versions"], start=1):
-        st.markdown(f"**Version {i}**  ·  {word_count(script)} words")
-        st.code(script, language=None, wrap_lines=True)  # copy button built in
+    result_type = get_copy_type(brief.copy_type)
+    st.subheader(f"Your {result_type.noun}s")
+    for i, copy in enumerate(result["versions"], start=1):
+        st.markdown(f"**Version {i}**  ·  {word_count(copy)} words · {len(copy)} characters")
+        st.code(copy, language=None, wrap_lines=True)  # copy button built in
+        for warning in limit_warnings(copy, brief.copy_type, brief.platform):
+            st.warning(warning)
         with st.expander(f"Review version {i}"):
             with st.form(f"fb_{i}"):
                 rating = st.slider("How good is it?", 1, 5, 3)
@@ -168,17 +148,18 @@ if result:
                 if st.form_submit_button("Save review"):
                     row = {
                         "time": datetime.now().isoformat(timespec="seconds"),
+                        "copy_type": result_type.label, "platform": brief.platform,
                         "product": brief.product, "audience": brief.audience,
                         "qualities": " | ".join(brief.qualities_clean), "offer": brief.offer,
                         "language": brief.language, "length": brief.length, "tone": brief.tone,
-                        "script": script, "rating": rating, "whats_weak": weak,
+                        "script": copy, "rating": rating, "whats_weak": weak,
                         "expert_rewrite": rewrite,
                     }
-                    save_feedback(row)
-                    sent = notify_developer(row)
+                    save_feedback(row, FEEDBACK_FILE)
+                    sent = notify_developer(row, get_setting("DISCORD_WEBHOOK_URL"))
                     st.success("Saved and sent. Thank you!" if sent else "Saved. Thank you!")
 
-# data = feedback_csv_bytes()
+# data = feedback_csv_bytes(FEEDBACK_FILE)
 # if data:
 #     st.divider()
 #     st.download_button("⬇️ Download all reviews (CSV)", data, "feedback.csv", "text/csv")
