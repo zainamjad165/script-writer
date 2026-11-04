@@ -72,3 +72,10 @@ def test_notify_failure_never_raises(monkeypatch):
     assert notify_developer(row(), "https://hook") is False
     monkeypatch.setattr("feedback.requests.post", FakePost(500))
     assert notify_developer(row(), "https://hook") is False
+
+
+def test_discord_message_shows_version_note(monkeypatch):
+    fake = FakePost()
+    monkeypatch.setattr("feedback.requests.post", fake)
+    notify_developer(row(version_note="Refined from version 1 (Make it shorter)"), "https://hook")
+    assert "Refined from version 1" in fake.calls[0][1]["json"]["content"]

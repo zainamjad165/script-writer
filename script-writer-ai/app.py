@@ -9,10 +9,11 @@ from pathlib import Path
 import streamlit as st
 
 from feedback import feedback_csv_bytes, notify_developer, save_feedback
+from checks import run_checks
 from llm import DEFAULT_MODEL, LLMError, generate
 from prompt import (
-    COPY_TYPES, LANGUAGES, TONES, Brief, build_prompt, get_copy_type, limit_warnings,
-    parse_versions, word_count,
+    COPY_TYPES, LANGUAGES, REFINE_ACTIONS, TONES, Brief, build_prompt, build_refine_prompt,
+    get_copy_type, parse_versions, refine_instruction, word_count,
 )
 
 BASE_DIR = Path(__file__).parent
@@ -125,7 +126,10 @@ if submitted:
             with st.spinner("Writing..."):
                 text = generate(system, user, get_setting("GEMINI_API_KEY"),
                                 model=model, temperature=creativity)
-            st.session_state["result"] = {"brief": brief, "versions": parse_versions(text)}
+            st.session_state["result"] = {
+                "brief": brief,
+                "versions": [{"text": v, "note": ""} for v in parse_versions(text)],
+            }
         except LLMError as e:
             st.session_state.pop("result", None)
             st.error(str(e))
@@ -135,13 +139,51 @@ if result:
     brief: Brief = result["brief"]
     result_type = get_copy_type(brief.copy_type)
     st.subheader(f"Your {result_type.noun}s")
-    for i, copy in enumerate(result["versions"], start=1):
-        st.markdown(f"**Version {i}**  ·  {word_count(copy)} words · {len(copy)} characters")
+    for idx, item in enumerate(list(result["versions"])):
+        n = idx + 1
+        copy = item["text"]
+        note = f"  ·  {item['note']}" if item["note"] else ""
+        st.markdown(f"**Version {n}**{note}  ·  {word_count(copy)} words · {len(copy)} characters")
         st.code(copy, language=None, wrap_lines=True)  # copy button built in
-        for warning in limit_warnings(copy, brief.copy_type, brief.platform):
-            st.warning(warning)
-        with st.expander(f"Review version {i}"):
-            with st.form(f"fb_{i}"):
+
+        problems = run_checks(copy, brief)
+        if problems:
+            for problem in problems:
+                st.warning(problem)
+        else:
+            st.caption("✅ Passed all automatic checks")
+
+        with st.expander(f"Refine version {n}"):
+            action = st.selectbox("What should change?", list(REFINE_ACTIONS), key=f"ra_{idx}")
+            new_tone = custom = ""
+            if action == "Change the tone":
+                new_tone = st.selectbox("New tone", TONES, key=f"rt_{idx}")
+            if action == "Custom change":
+                custom = st.text_input("Describe the change", key=f"rc_{idx}",
+                                       placeholder="e.g. mention the warranty in the last line")
+            if st.button("Refine", key=f"refine_{idx}"):
+                instruction = refine_instruction(action, new_tone, custom)
+                if not instruction:
+                    st.warning("Please describe the change first.")
+                else:
+                    system, user = build_refine_prompt(brief, copy, instruction)
+                    try:
+                        with st.spinner("Refining..."):
+                            text = generate(system, user, get_setting("GEMINI_API_KEY"),
+                                            model=model, temperature=creativity)
+                        revised = parse_versions(text)
+                        if revised:
+                            label = new_tone and f"{action}: {new_tone}" or action
+                            result["versions"].append(
+                                {"text": revised[0], "note": f"Refined from version {n} ({label})"})
+                            st.rerun()
+                        else:
+                            st.error("The AI returned nothing. Try again.")
+                    except LLMError as e:
+                        st.error(str(e))
+
+        with st.expander(f"Review version {n}"):
+            with st.form(f"fb_{idx}"):
                 rating = st.slider("How good is it?", 1, 5, 3)
                 weak = st.text_area("What's weak or wrong?")
                 rewrite = st.text_area("How would you write it? (optional - very valuable)")
@@ -152,8 +194,8 @@ if result:
                         "product": brief.product, "audience": brief.audience,
                         "qualities": " | ".join(brief.qualities_clean), "offer": brief.offer,
                         "language": brief.language, "length": brief.length, "tone": brief.tone,
-                        "script": copy, "rating": rating, "whats_weak": weak,
-                        "expert_rewrite": rewrite,
+                        "version_note": item["note"], "script": copy, "rating": rating,
+                        "whats_weak": weak, "expert_rewrite": rewrite,
                     }
                     save_feedback(row, FEEDBACK_FILE)
                     sent = notify_developer(row, get_setting("DISCORD_WEBHOOK_URL"))

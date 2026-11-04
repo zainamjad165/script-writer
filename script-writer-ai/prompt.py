@@ -49,6 +49,7 @@ class CopyType:
     toggles: dict = field(default_factory=dict)
     keywords_label: str = ""   # if set, the form shows a keywords box with this label
     length_label: str = "Length"
+    word_ranges: dict = field(default_factory=dict)  # length label -> (min, max) words
 
     def format_for(self, platform: str) -> str:
         return self.output_format.get(platform, self.output_format["*"])
@@ -74,6 +75,7 @@ COPY_TYPES: dict = {
         default_length="30 seconds",
         platforms=["Instagram Reels", "TikTok", "YouTube Shorts", "Facebook ad", "General video"],
         output_format={"*": "The spoken voiceover text only, as plain paragraph(s)."},
+        word_ranges={"15 seconds": (35, 45), "30 seconds": (70, 85), "60 seconds": (140, 170)},
     ),
     "caption": CopyType(
         key="caption",
@@ -98,6 +100,7 @@ COPY_TYPES: dict = {
                              "Use emojis sparingly (2-4 total), only where they add meaning.",
                              "Do not use any emojis."),
         },
+        word_ranges={"Short": (1, 30), "Medium": (40, 70), "Long": (90, 150)},
     ),
     "ad": CopyType(
         key="ad",
@@ -124,6 +127,7 @@ COPY_TYPES: dict = {
         },
         keywords_label="Search keywords to include (optional)",
         length_label="Length (Facebook / Instagram only)",
+        word_ranges={"Short": (20, 30), "Medium": (40, 60)},
     ),
     "product": CopyType(
         key="product",
@@ -147,6 +151,7 @@ COPY_TYPES: dict = {
                               "Write flowing text with no bullet points."),
         },
         keywords_label="Keywords to include naturally (optional)",
+        word_ranges={"Short": (40, 60), "Standard": (80, 120), "Long": (150, 200)},
     ),
 }
 
@@ -248,6 +253,33 @@ def _format_example(ex: dict) -> str:
     )
 
 
+def _brief_lines(brief: Brief, ct: CopyType, platform: str, length_text: str) -> list:
+    lines = [
+        f"Copy type: {ct.label}",
+        f"Product / service: {brief.product.strip()}",
+        f"Target audience: {brief.audience.strip()}",
+        "Key qualities:",
+        *[f"- {q}" for q in brief.qualities_clean],
+        f"Offer: {brief.offer.strip() or 'none given - do not invent one; end with a call to action only'}",
+        f"Language: {brief.language}. {LANGUAGES.get(brief.language, '')}",
+        f"Length: {length_text}",
+        f"Tone: {brief.tone}",
+        f"Platform: {platform}",
+    ]
+    for key, toggle in ct.toggles.items():
+        on = brief.toggles.get(key, toggle.default)
+        instruction = toggle.when_on if on else toggle.when_off
+        if instruction:
+            lines.append(instruction)
+    if brief.keywords.strip() and ct.keywords_label:
+        lines.append(f"Keywords to include naturally: {brief.keywords.strip()}")
+    if brief.avoid.strip():
+        lines.append(f"Words or claims to avoid: {brief.avoid.strip()}")
+    if brief.extra.strip():
+        lines.append(f"Extra notes from the buyer: {brief.extra.strip()}")
+    return lines
+
+
 def build_prompt(brief: Brief, rules: str | None = None, examples: list | None = None) -> tuple:
     """Return (system_prompt, user_prompt)."""
     ct = get_copy_type(brief.copy_type)
@@ -280,29 +312,7 @@ def build_prompt(brief: Brief, rules: str | None = None, examples: list | None =
         "Output only the copy itself: no version numbers, notes or explanations.",
     ]
 
-    lines = [
-        f"Copy type: {ct.label}",
-        f"Product / service: {brief.product.strip()}",
-        f"Target audience: {brief.audience.strip()}",
-        "Key qualities:",
-        *[f"- {q}" for q in brief.qualities_clean],
-        f"Offer: {brief.offer.strip() or 'none given - do not invent one; end with a call to action only'}",
-        f"Language: {brief.language}. {LANGUAGES.get(brief.language, '')}",
-        f"Length: {length_text}",
-        f"Tone: {brief.tone}",
-        f"Platform: {platform}",
-    ]
-    for key, toggle in ct.toggles.items():
-        on = brief.toggles.get(key, toggle.default)
-        instruction = toggle.when_on if on else toggle.when_off
-        if instruction:
-            lines.append(instruction)
-    if brief.keywords.strip() and ct.keywords_label:
-        lines.append(f"Keywords to include naturally: {brief.keywords.strip()}")
-    if brief.avoid.strip():
-        lines.append(f"Words or claims to avoid: {brief.avoid.strip()}")
-    if brief.extra.strip():
-        lines.append(f"Extra notes from the buyer: {brief.extra.strip()}")
+    lines = _brief_lines(brief, ct, platform, length_text)
     lines += ["", "Write the copy now."]
     return "\n".join(system), "\n".join(lines)
 
@@ -337,3 +347,68 @@ def limit_warnings(text: str, copy_type: str, platform: str) -> list:
                 f"\"{content[:35]}…\""
             )
     return warnings
+
+
+# ---------- refining an existing version ----------
+REFINE_ACTIONS = {
+    "Make it shorter": (
+        "Make it clearly shorter (about 25% fewer words) without losing the offer, "
+        "the call to action or the key benefits."
+    ),
+    "Make it longer": (
+        "Make it about 25% longer by using more of the key qualities from the brief. "
+        "Do not add any facts that are not in the brief."
+    ),
+    "Try a different hook": (
+        "Keep everything else, but replace the opening hook with a different one "
+        "(use the same kind of opening the rules ask for)."
+    ),
+    "Change the tone": "",    # needs the new tone
+    "Custom change": "",      # needs the user's own words
+}
+
+
+def refine_instruction(action: str, tone: str = "", custom: str = "") -> str:
+    """Turn the chosen refine action into an instruction. Empty means 'incomplete'."""
+    if action == "Change the tone":
+        return f"Rewrite it in a {tone} tone. Keep all facts and the structure." if tone else ""
+    if action == "Custom change":
+        return custom.strip()
+    return REFINE_ACTIONS.get(action, "")
+
+
+def build_refine_prompt(brief: Brief, original: str, instruction: str,
+                        rules: str | None = None) -> tuple:
+    """Return (system_prompt, user_prompt) for revising one existing version."""
+    ct = get_copy_type(brief.copy_type)
+    rules = load_rules(ct.key) if rules is None else rules
+    platform = brief.platform if brief.platform in ct.platforms else ct.platforms[0]
+    length_text = ct.lengths.get(brief.length, ct.lengths[ct.default_length])
+    system = [
+        f"You are an expert copywriter revising existing {ct.label.lower()}. "
+        "Follow the expert's rules exactly.",
+        "",
+        "RULES:",
+        rules or "(no rules file found - be clear, concrete and benefit-led)",
+        "",
+        "OUTPUT FORMAT:",
+        ct.format_for(platform),
+        "",
+        "Apply ONLY the requested change. Keep every fact, the offer and the call to action "
+        "unless the change says otherwise. Never add facts, numbers or offers that are not in "
+        "the brief or the original. Output exactly ONE revised version and nothing else: "
+        "no notes or explanations.",
+    ]
+    user = [
+        "ORIGINAL COPY:",
+        original.strip(),
+        "",
+        "REQUESTED CHANGE:",
+        instruction.strip(),
+        "",
+        "BRIEF (for reference):",
+        *_brief_lines(brief, ct, platform, length_text),
+        "",
+        "Write the revised copy now.",
+    ]
+    return "\n".join(system), "\n".join(user)

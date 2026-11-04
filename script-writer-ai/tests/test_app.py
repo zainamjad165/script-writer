@@ -61,3 +61,53 @@ def test_google_ad_over_limit_shows_warning(monkeypatch):
         fill(at)
         at.button[0].click().run(timeout=30)
     assert any("40 characters" in w.value for w in at.warning)
+
+
+def generate_once(monkeypatch, text="Tired of warm water?\n===VERSION===\nSecond hook?"):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    with patch("llm.generate", return_value=text):
+        at = fresh()
+        fill(at)
+        at.button[0].click().run(timeout=30)
+    assert not at.exception
+    return at
+
+
+def test_checks_are_shown_for_each_version(monkeypatch):
+    at = generate_once(monkeypatch)
+    # both versions are far shorter than the 30-second target, so both get a warning
+    assert sum("target is" in w.value for w in at.warning) == 2
+
+
+def test_clean_version_shows_passed_message(monkeypatch):
+    good = ("Tired of warm water? " + "word " * 72).strip()
+    at = generate_once(monkeypatch, good)
+    assert any("Passed all automatic checks" in c.value for c in at.caption)
+
+
+def test_refine_adds_a_new_version_and_keeps_the_old_one(monkeypatch):
+    at = generate_once(monkeypatch)
+    with patch("llm.generate", return_value="Cold water all day?"):
+        at.selectbox(key="ra_0").select("Make it shorter")
+        at.button(key="refine_0").click().run(timeout=30)
+    assert not at.exception
+    codes = [c.value for c in at.code]
+    assert codes == ["Tired of warm water?", "Second hook?", "Cold water all day?"]
+    assert any("Refined from version 1 (Make it shorter)" in m.value for m in at.markdown)
+
+
+def test_refine_custom_needs_text(monkeypatch):
+    at = generate_once(monkeypatch)
+    at.selectbox(key="ra_1").select("Custom change").run(timeout=30)
+    at.button(key="refine_1").click().run(timeout=30)
+    assert any("describe the change" in w.value.lower() for w in at.warning)
+    assert len(at.code) == 2
+
+
+def test_refine_error_is_shown_and_nothing_added(monkeypatch):
+    from llm import LLMError
+    at = generate_once(monkeypatch)
+    with patch("llm.generate", side_effect=LLMError("Free limit reached for now")):
+        at.button(key="refine_0").click().run(timeout=30)
+    assert any("Free limit reached" in e.value for e in at.error)
+    assert len(at.code) == 2

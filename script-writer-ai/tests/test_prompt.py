@@ -4,8 +4,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from prompt import (COPY_TYPES, VERSION_SEPARATOR, Brief, build_prompt, limit_warnings,
-                    load_examples, load_rules, parse_versions, pick_examples)
+from prompt import (COPY_TYPES, REFINE_ACTIONS, VERSION_SEPARATOR, Brief, build_prompt,
+                    build_refine_prompt, limit_warnings, load_examples, load_rules,
+                    parse_versions, pick_examples, refine_instruction)
 
 
 def make_brief(**kw):
@@ -119,3 +120,24 @@ def test_parse_versions():
     assert parse_versions(text) == ["one", "two"]
     assert parse_versions("just one") == ["just one"]
     assert parse_versions("  ") == []
+
+
+def test_refine_instruction_variants():
+    assert "shorter" in refine_instruction("Make it shorter")
+    assert "Funny" in refine_instruction("Change the tone", tone="Funny")
+    assert refine_instruction("Change the tone") == ""            # no tone chosen yet
+    assert refine_instruction("Custom change", custom="  add warranty ") == "add warranty"
+    assert refine_instruction("Custom change", custom="  ") == ""
+    assert refine_instruction("nonsense") == ""
+    assert set(REFINE_ACTIONS) >= {"Make it shorter", "Try a different hook", "Custom change"}
+
+
+def test_refine_prompt_has_original_change_brief_and_format():
+    for key, ct in COPY_TYPES.items():
+        b = make_brief(copy_type=key, platform=ct.platforms[0], length=ct.default_length)
+        system, user = build_refine_prompt(b, "ORIGINAL TEXT?", "make it punchier", rules="RULE-X")
+        assert "RULE-X" in system and "ONE revised version" in system
+        assert ct.format_for(ct.platforms[0]) in system
+        assert "ORIGINAL TEXT?" in user and "make it punchier" in user
+        assert "Steel bottle" in user and "Free delivery" in user
+        assert VERSION_SEPARATOR not in system
