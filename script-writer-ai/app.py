@@ -5,6 +5,7 @@ import csv
 import hmac
 import io
 import os
+import requests
 from datetime import datetime
 from pathlib import Path
 
@@ -53,6 +54,27 @@ def save_feedback(row: dict) -> None:
             writer.writeheader()
         writer.writerow({k: row.get(k, "") for k in FEEDBACK_COLUMNS})
 
+def notify_developer(row: dict) -> bool:
+    """Send a saved review to Discord. Never raises, so saving can't break."""
+    url = get_setting("DISCORD_WEBHOOK_URL")
+    if not url:
+        return False
+    text = (
+        f"📝 New review: {row.get('rating')}/5\n"
+        f"{row.get('product')} | {row.get('language')} | {row.get('length')} | {row.get('tone')}\n\n"
+        f"SCRIPT:\n{row.get('script')}\n\n"
+        f"WEAK: {row.get('whats_weak') or '-'}\n\n"
+        f"HER REWRITE: {row.get('expert_rewrite') or '-'}"
+    ).replace("@", "@\u200b")  # stops @everyone pings from user text
+    try:
+        if len(text) <= 1900:
+            r = requests.post(url, json={"content": text}, timeout=15)
+        else:  # Discord limit is 2000 chars, so attach the full text as a file
+            r = requests.post(url, data={"content": text[:1900] + "…"},
+                              files={"file": ("review.txt", text.encode("utf-8"))}, timeout=15)
+        return r.status_code < 300
+    except requests.RequestException:
+        return False
 
 def feedback_csv_bytes() -> bytes | None:
     if not FEEDBACK_FILE.exists():
@@ -144,15 +166,17 @@ if result:
                 weak = st.text_area("What's weak or wrong?")
                 rewrite = st.text_area("How would you write it? (optional - very valuable)")
                 if st.form_submit_button("Save review"):
-                    save_feedback({
+                    row = {
                         "time": datetime.now().isoformat(timespec="seconds"),
                         "product": brief.product, "audience": brief.audience,
                         "qualities": " | ".join(brief.qualities_clean), "offer": brief.offer,
                         "language": brief.language, "length": brief.length, "tone": brief.tone,
                         "script": script, "rating": rating, "whats_weak": weak,
                         "expert_rewrite": rewrite,
-                    })
-                    st.success("Saved. Thank you!")
+                    }
+                    save_feedback(row)
+                    sent = notify_developer(row)
+                    st.success("Saved and sent. Thank you!" if sent else "Saved. Thank you!")
 
 data = feedback_csv_bytes()
 if data:
