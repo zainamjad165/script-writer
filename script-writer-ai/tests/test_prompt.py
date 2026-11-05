@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from prompt import (COPY_TYPES, REFINE_ACTIONS, VERSION_SEPARATOR, Brief, build_prompt,
-                    build_refine_prompt, limit_warnings, load_examples, load_rules,
+                    build_batch_fix_prompt, build_refine_prompt, limit_warnings, load_examples, load_rules,
                     parse_versions, pick_examples, refine_instruction)
 
 
@@ -141,3 +141,15 @@ def test_refine_prompt_has_original_change_brief_and_format():
         assert "ORIGINAL TEXT?" in user and "make it punchier" in user
         assert "Steel bottle" in user and "Free delivery" in user
         assert VERSION_SEPARATOR not in system
+
+
+def test_batch_fix_prompt_lists_each_version_with_its_problems():
+    b = make_brief(copy_type="script", platform="TikTok", length="15 seconds")
+    system, user = build_batch_fix_prompt(
+        b, [("First text?", ["Problem A."]), ("Second text?", ["Problem B.", "Problem C."])],
+        keep="Make it shorter", rules="RULE-X")
+    assert "exactly 2 revised version(s)" in system and VERSION_SEPARATOR in system
+    assert "RULE-X" in system and "Do not undo that change" in system
+    assert user.index("VERSION 1:") < user.index("First text?") < user.index("VERSION 2:")
+    assert "- Problem A." in user and "- Problem C." in user
+    assert "Steel bottle" in user                     # brief included for reference

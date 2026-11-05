@@ -8,10 +8,17 @@ import requests
 API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 # "-latest" aliases keep working when Google retires specific model versions.
 DEFAULT_MODEL = "gemini-flash-lite-latest"
+# Tried automatically when the main model hits its free limit. As far as I know,
+# free-tier limits are counted per model, so a second model has its own allowance.
+DEFAULT_FALLBACK_MODELS = ("gemini-flash-latest",)
 
 
 class LLMError(Exception):
     """Raised with a message that is safe and friendly to show to the user."""
+
+    def __init__(self, message: str, rate_limited: bool = False):
+        super().__init__(message)
+        self.rate_limited = rate_limited
 
 
 def _friendly_error(status: int, body: dict | None) -> str:
@@ -34,18 +41,7 @@ def _friendly_error(status: int, body: dict | None) -> str:
     return f"Unexpected error ({status}): {msg}"
 
 
-def generate(
-    system: str,
-    user: str,
-    api_key: str,
-    model: str = DEFAULT_MODEL,
-    temperature: float = 0.9,
-    timeout: int = 60,
-    session: requests.Session | None = None,
-) -> str:
-    if not api_key:
-        raise LLMError("No API key found. Add GEMINI_API_KEY (see README).")
-    http = session or requests
+def _generate_one(system, user, api_key, model, temperature, timeout, http) -> str:
     payload = {
         "system_instruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user", "parts": [{"text": user}]}],
@@ -54,7 +50,7 @@ def generate(
     headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
     url = API_URL.format(model=model.strip() or DEFAULT_MODEL)
 
-    last_error = "Unknown error"
+    last_error, status = "Unknown error", 0
     for attempt in range(2):  # one retry on temporary server errors
         try:
             resp = http.post(url, json=payload, headers=headers, timeout=timeout)
@@ -64,14 +60,40 @@ def generate(
             body = resp.json()
         except ValueError:
             body = None
-        if resp.status_code == 200:
+        status = resp.status_code
+        if status == 200:
             return _extract_text(body)
-        last_error = _friendly_error(resp.status_code, body)
-        if resp.status_code >= 500 and attempt == 0:
+        last_error = _friendly_error(status, body)
+        if status >= 500 and attempt == 0:
             time.sleep(2)
             continue
         break
-    raise LLMError(last_error)
+    raise LLMError(last_error, rate_limited=(status == 429))
+
+
+def generate(
+    system: str,
+    user: str,
+    api_key: str,
+    model: str = DEFAULT_MODEL,
+    temperature: float = 0.9,
+    timeout: int = 60,
+    session: requests.Session | None = None,
+    fallback_models: tuple | list = (),
+) -> str:
+    if not api_key:
+        raise LLMError("No API key found. Add GEMINI_API_KEY (see README).")
+    http = session or requests
+    models = [model] + [m for m in fallback_models if m and m != model]
+    last: LLMError | None = None
+    for name in models:
+        try:
+            return _generate_one(system, user, api_key, name, temperature, timeout, http)
+        except LLMError as e:
+            last = e
+            if not e.rate_limited:   # only a free-limit error is worth trying another model for
+                raise
+    raise last  # every model was rate limited
 
 
 def _extract_text(body: dict | None) -> str:

@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from checks import run_checks
+from checks import normalize_numbers, run_checks
 from prompt import Brief, load_examples
 
 
@@ -108,3 +108,35 @@ def test_product_title_and_bullets():
     assert has(problems, "title is 71") and has(problems, "none were added")
     with_bullets = "TITLE: Bottle\nDESCRIPTION: " + "word " * 48 + "\n- cold\n- sealed"
     assert not has(run_checks(with_bullets, pr), "Bullet")  # bullets excluded from the word count
+
+
+def test_spelled_out_numbers_are_understood():
+    assert normalize_numbers("twenty percent, thirty-two, two hundred and fifty, twenty-one") == \
+        "20%, 32, 250, 21"
+    # a lone "one" is ordinary English, not a number
+    assert normalize_numbers("one clear call to action, no one") == "one clear call to action, no one"
+
+
+def test_offer_written_in_words_counts_as_present():
+    earbuds = brief(offer="20% off this weekend", length="30 seconds",
+                    qualities=["8 hours of playback, 32 hours with the case"])
+    text = ("Tired of dead earbuds mid-workout? " + "word " * 55 +
+            "eight hours of music, plus thirty-two more in the case. "
+            "Get twenty percent off this weekend. Tap the link.")
+    problems = run_checks(text, earbuds)
+    assert not has(problems, "seems to be missing") and not has(problems, "numbers")
+
+
+def test_spelled_out_number_not_in_brief_is_still_flagged():
+    assert has(run_checks(GOOD_SCRIPT.replace("24 hours", "forty-eight hours"), brief()), "48")
+
+
+def test_relax_lets_a_deliberately_shorter_or_longer_text_pass_the_length_check():
+    short = "Why wait? Free delivery."
+    assert has(run_checks(short, brief()), "target is")
+    assert not has(run_checks(short, brief(), relax="shorter"), "target is")
+    assert has(run_checks(short, brief(), relax="longer"), "target is")
+    long = "Why wait? " + "word " * 80 + "free delivery"
+    assert has(run_checks(long, brief()), "target is")
+    assert not has(run_checks(long, brief(), relax="longer"), "target is")
+    assert has(run_checks(long, brief(), relax="shorter"), "target is")

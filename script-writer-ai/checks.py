@@ -10,6 +10,21 @@ import re
 
 from prompt import Brief, get_copy_type, limit_warnings
 
+_UNITS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+    "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+    "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19,
+}
+_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70,
+         "eighty": 80, "ninety": 90}
+_TWO_TO_NINETEEN = "|".join(k for k in _UNITS if k != "one")
+_TENS_RE = "|".join(_TENS)
+_BELOW_100 = rf"(?:(?:{_TENS_RE})(?:[\s-](?:one|{_TWO_TO_NINETEEN}))?|(?:{_TWO_TO_NINETEEN}))"
+_HUNDREDS = rf"(?:(?:one|{_TWO_TO_NINETEEN})\s+hundred(?:\s+(?:and\s+)?{_BELOW_100})?)"
+# A lone "one" is left alone on purpose: "no one", "one clear call to action"
+SPELLED_NUMBER_RE = re.compile(rf"\b(?:{_HUNDREDS}|{_BELOW_100})\b", re.IGNORECASE)
+PERCENT_RE = re.compile(r"(\d)\s*(?:percent|per cent)\b", re.IGNORECASE)
+
 TOLERANCE = 0.15            # word counts may be 15% outside the target range
 MAX_HOOK_WORDS = 14         # rules say 12; allow a little slack
 FACEBOOK_HEADLINE_LIMIT = 40
@@ -27,6 +42,24 @@ OFFER_PATTERNS = {
     "'sale'": re.compile(r"\bsale\b"),
     "'muft'": re.compile(r"\bmuft\b"),
 }
+
+
+def _spelled_to_int(phrase: str) -> int:
+    total = 0
+    for token in re.split(r"[\s-]+", phrase.lower()):
+        if token == "and":
+            continue
+        if token == "hundred":
+            total = max(total, 1) * 100
+        else:
+            total += _UNITS.get(token) or _TENS[token]
+    return total
+
+
+def normalize_numbers(text: str) -> str:
+    """'twenty percent' -> '20%', 'thirty-two' -> '32', so numbers compare fairly."""
+    text = SPELLED_NUMBER_RE.sub(lambda m: str(_spelled_to_int(m.group(0))), text)
+    return PERCENT_RE.sub(r"\1%", text)
 
 
 def _line_value(text: str, label: str) -> str:
@@ -56,12 +89,15 @@ def _input_text(brief: Brief) -> str:
                      brief.extra, brief.keywords, brief.avoid])
 
 
-def run_checks(text: str, brief: Brief) -> list:
+def run_checks(text: str, brief: Brief, relax: str = "") -> list:
+    """relax="shorter" ignores a too-short result, relax="longer" ignores a too-long one
+    (used after the user deliberately asked for a shorter or longer version)."""
     ct = get_copy_type(brief.copy_type)
     platform = brief.platform if brief.platform in ct.platforms else ct.platforms[0]
     out: list = []
-    lowered = text.lower()
-    given = _input_text(brief)
+    normalized = normalize_numbers(text)      # spelled-out numbers become digits
+    lowered = normalized.lower()
+    given = normalize_numbers(_input_text(brief))
 
     # --- structure -------------------------------------------------------
     if ct.key == "script":
@@ -80,7 +116,9 @@ def run_checks(text: str, brief: Brief) -> list:
     if target and not is_google:
         lo, hi = target
         n = _words(_body(text, ct.key, platform))
-        if n < lo * (1 - TOLERANCE) or n > hi * (1 + TOLERANCE):
+        too_short = n < lo * (1 - TOLERANCE) and relax != "shorter"
+        too_long = n > hi * (1 + TOLERANCE) and relax != "longer"
+        if too_short or too_long:
             out.append(f"It has {n} words, but the target is {lo}-{hi}.")
 
     # --- hard limits -----------------------------------------------------
@@ -114,7 +152,7 @@ def run_checks(text: str, brief: Brief) -> list:
             out.append("Bullet highlights were switched off but the text contains some.")
 
     # --- honesty: the brief is the only source of facts -------------------
-    unlabeled = LABEL_NUMBER_RE.sub("", text)  # "HEADLINE 1:" is a label, not a fact
+    unlabeled = LABEL_NUMBER_RE.sub("", normalized)  # "HEADLINE 1:" is a label, not a fact
     extra_numbers = sorted(set(NUMBER_RE.findall(unlabeled)) - set(NUMBER_RE.findall(given)),
                            key=lambda x: float(x.replace(",", ".")))
     if extra_numbers:
@@ -126,7 +164,7 @@ def run_checks(text: str, brief: Brief) -> list:
         digits = NUMBER_RE.findall(offer)
         words = [t for t in re.findall(r"\w+", offer.lower()) if len(t) > 2]
         if digits:
-            if not all(d in text for d in digits):
+            if not all(d in normalized for d in digits):
                 out.append(f"Your offer ('{offer}') seems to be missing.")
         elif brief.language == "English" and words:
             found = sum(1 for w in words if w in lowered)

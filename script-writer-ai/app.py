@@ -9,10 +9,11 @@ from pathlib import Path
 import streamlit as st
 
 from feedback import feedback_csv_bytes, notify_developer, save_feedback
+from autofix import auto_fix_many
 from checks import run_checks
-from llm import DEFAULT_MODEL, LLMError, generate
+from llm import DEFAULT_FALLBACK_MODELS, DEFAULT_MODEL, LLMError, generate
 from prompt import (
-    COPY_TYPES, LANGUAGES, REFINE_ACTIONS, TONES, Brief, build_prompt, build_refine_prompt,
+    COPY_TYPES, LANGUAGES, REFINE_ACTIONS, REFINE_RELAX, TONES, Brief, build_prompt, build_refine_prompt,
     get_copy_type, parse_versions, refine_instruction, word_count,
 )
 
@@ -72,8 +73,37 @@ with st.sidebar:
                           help="If you see a 'model not found' error, try gemini-flash-latest")
     creativity = st.slider("Creativity", 0.2, 1.2, 0.9, 0.1)
     n_versions = st.radio("Versions per request", [1, 2, 3], index=2, horizontal=True)
+    autofix_tries = st.radio(
+        "Auto-fix problems", [0, 1, 2], index=1, horizontal=True, key="autofix_tries",
+        format_func=lambda n: "Off" if n == 0 else f"{n} try" if n == 1 else f"{n} tries",
+        help="When a result fails a check, the AI revises it automatically. "
+             "Each try is ONE extra request that fixes all failing versions together. "
+             "Emojis and hashtags are removed for free, without any request.")
+    usage_box = st.empty()
     st.info("Free AI limits are small. If you hit a limit, wait a bit and retry. "
             "Don't enter confidential client details.")
+
+FALLBACKS = [m.strip() for m in get_setting(
+    "GEMINI_FALLBACK_MODELS", ",".join(DEFAULT_FALLBACK_MODELS)).split(",") if m.strip()]
+
+
+def ai(system: str, user: str, temperature: float) -> str:
+    """Every AI request goes through here, so the sidebar can count them."""
+    st.session_state["ai_requests"] = st.session_state.get("ai_requests", 0) + 1
+    return generate(system, user, get_setting("GEMINI_API_KEY"), model=model,
+                    temperature=temperature, fallback_models=FALLBACKS)
+
+
+def fix_fn(system: str, user: str) -> str:
+    """Fixes should be careful, so use a lower creativity than the first draft."""
+    return ai(system, user, min(creativity, 0.6))
+
+
+def fix_note(fix) -> str:
+    if fix.fixed:
+        return "Auto-fixed"
+    return f"Auto-fix tried {fix.attempts}x, some issues remain" if fix.attempts else ""
+
 
 # The type picker sits outside the form so the form below can change with it.
 type_by_label = {ct.label: key for key, ct in COPY_TYPES.items()}
@@ -124,12 +154,19 @@ if submitted:
         system, user = build_prompt(brief)
         try:
             with st.spinner("Writing..."):
-                text = generate(system, user, get_setting("GEMINI_API_KEY"),
-                                model=model, temperature=creativity)
-            st.session_state["result"] = {
-                "brief": brief,
-                "versions": [{"text": v, "note": ""} for v in parse_versions(text)],
-            }
+                text = ai(system, user, creativity)
+            drafts = parse_versions(text)
+            fixes = [None] * len(drafts)
+            if autofix_tries:
+                with st.spinner("Checking and fixing..."):
+                    fixes = auto_fix_many(brief, drafts, fix_fn, autofix_tries)
+                if fixes and fixes[0].error:
+                    st.warning(f"Auto-fix stopped early: {fixes[0].error}")
+            versions = [
+                {"text": f.text if f else d, "note": fix_note(f) if f else "", "relax": ""}
+                for d, f in zip(drafts, fixes)
+            ]
+            st.session_state["result"] = {"brief": brief, "versions": versions}
         except LLMError as e:
             st.session_state.pop("result", None)
             st.error(str(e))
@@ -146,10 +183,23 @@ if result:
         st.markdown(f"**Version {n}**{note}  ·  {word_count(copy)} words · {len(copy)} characters")
         st.code(copy, language=None, wrap_lines=True)  # copy button built in
 
-        problems = run_checks(copy, brief)
+        relax = item.get("relax", "")
+        problems = run_checks(copy, brief, relax)
         if problems:
             for problem in problems:
                 st.warning(problem)
+            if st.button("🔧 Fix these problems", key=f"fix_{idx}"):
+                with st.spinner("Fixing..."):
+                    fix = auto_fix_many(brief, [copy], fix_fn, 2, relax=relax)[0]
+                if fix.error:
+                    st.error(fix.error)
+                elif fix.text == copy:
+                    st.info("I couldn't improve this version. Try Refine → Custom change.")
+                else:
+                    tail = "" if fix.fixed else " (some issues remain)"
+                    result["versions"].append(
+                        {"text": fix.text, "note": f"Fixed from version {n}{tail}", "relax": relax})
+                    st.rerun()
         else:
             st.caption("✅ Passed all automatic checks")
 
@@ -169,13 +219,24 @@ if result:
                     system, user = build_refine_prompt(brief, copy, instruction)
                     try:
                         with st.spinner("Refining..."):
-                            text = generate(system, user, get_setting("GEMINI_API_KEY"),
-                                            model=model, temperature=creativity)
+                            text = ai(system, user, creativity)
                         revised = parse_versions(text)
                         if revised:
                             label = new_tone and f"{action}: {new_tone}" or action
+                            new_text = revised[0]
+                            new_relax = REFINE_RELAX.get(action, "")
+                            note = f"Refined from version {n} ({label})"
+                            if autofix_tries:
+                                with st.spinner("Checking..."):
+                                    fix = auto_fix_many(brief, [new_text], fix_fn, autofix_tries,
+                                                        relax=new_relax, keep=instruction)[0]
+                                new_text = fix.text
+                                if fix.fixed:
+                                    note += ", auto-fixed"
+                                elif fix.attempts:
+                                    note += f", auto-fix tried {fix.attempts}x"
                             result["versions"].append(
-                                {"text": revised[0], "note": f"Refined from version {n} ({label})"})
+                                {"text": new_text, "note": note, "relax": new_relax})
                             st.rerun()
                         else:
                             st.error("The AI returned nothing. Try again.")
@@ -207,3 +268,5 @@ if result:
 #     st.download_button("⬇️ Download all reviews (CSV)", data, "feedback.csv", "text/csv")
 #     st.caption("Tip: on the free hosted version, saved reviews can disappear when the app "
 #                "restarts, so download them regularly and send the file to the developer.")
+
+usage_box.caption(f"AI requests this session: {st.session_state.get('ai_requests', 0)}")

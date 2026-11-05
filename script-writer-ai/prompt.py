@@ -412,3 +412,59 @@ def build_refine_prompt(brief: Brief, original: str, instruction: str,
         "Write the revised copy now.",
     ]
     return "\n".join(system), "\n".join(user)
+
+
+_FIX_GUIDANCE = (
+    "If a number is not in the brief, remove it or replace it with a fact from the brief. "
+    "If the offer is missing, include it exactly as given. "
+    "Respect the length target and every character limit."
+)
+
+# Refine actions that deliberately move the length away from the target
+REFINE_RELAX = {"Make it shorter": "shorter", "Make it longer": "longer"}
+
+
+def fix_instruction(problems: list) -> str:
+    """Turn the automatic checks' complaints into a revision instruction."""
+    listed = "\n".join(f"- {p}" for p in problems)
+    return (
+        "An automatic check found these problems. Fix ONLY these and keep everything else "
+        "as it is:\n" + listed + "\n" + _FIX_GUIDANCE
+    )
+
+
+def build_batch_fix_prompt(brief: Brief, items: list, keep: str = "",
+                           rules: str | None = None) -> tuple:
+    """Fix several versions in ONE request. items = [(text, [problems]), ...].
+    The AI must answer with the same number of versions, in the same order."""
+    ct = get_copy_type(brief.copy_type)
+    rules = load_rules(ct.key) if rules is None else rules
+    platform = brief.platform if brief.platform in ct.platforms else ct.platforms[0]
+    length_text = ct.lengths.get(brief.length, ct.lengths[ct.default_length])
+    n = len(items)
+    system = [
+        f"You are an expert copywriter fixing {ct.label.lower()}. Follow the expert's rules exactly.",
+        "",
+        "RULES:",
+        rules or "(no rules file found - be clear, concrete and benefit-led)",
+        "",
+        "OUTPUT FORMAT (for each version):",
+        ct.format_for(platform),
+        "",
+        f"You will receive {n} version(s). Each has problems found by an automatic check. "
+        "Fix ONLY the listed problems in each one and keep everything else as it is. "
+        f"{_FIX_GUIDANCE} Never add facts, numbers or offers that are not in the brief or the "
+        f"original. Answer with exactly {n} revised version(s), in the same order, with the line "
+        f"{VERSION_SEPARATOR} between them. No numbering, notes or explanations.",
+    ]
+    if keep.strip():
+        system.append(
+            f"The copy was just deliberately revised on request ({keep.strip()}). "
+            "Do not undo that change."
+        )
+    user = []
+    for i, (text, problems) in enumerate(items, start=1):
+        user += [f"VERSION {i}:", text.strip(), "PROBLEMS:", *[f"- {p}" for p in problems], ""]
+    user += ["BRIEF (for reference):", *_brief_lines(brief, ct, platform, length_text), "",
+             "Write the revised version(s) now."]
+    return "\n".join(system), "\n".join(user)
