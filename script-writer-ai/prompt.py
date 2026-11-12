@@ -258,7 +258,7 @@ def _brief_lines(brief: Brief, ct: CopyType, platform: str, length_text: str) ->
         f"Copy type: {ct.label}",
         f"Product / service: {brief.product.strip()}",
         f"Target audience: {brief.audience.strip()}",
-        "Key qualities:",
+        "Key qualities (ALL must appear in the copy):",
         *[f"- {q}" for q in brief.qualities_clean],
         f"Offer: {brief.offer.strip() or 'none given - do not invent one; end with a call to action only'}",
         f"Language: {brief.language}. {LANGUAGES.get(brief.language, '')}",
@@ -276,7 +276,9 @@ def _brief_lines(brief: Brief, ct: CopyType, platform: str, length_text: str) ->
     if brief.avoid.strip():
         lines.append(f"Words or claims to avoid: {brief.avoid.strip()}")
     if brief.extra.strip():
-        lines.append(f"Extra notes from the buyer: {brief.extra.strip()}")
+        lines.append(
+            f"Extra notes from the buyer (secondary facts, use only if there is space): "
+            f"{brief.extra.strip()}")
     return lines
 
 
@@ -307,7 +309,9 @@ def build_prompt(brief: Brief, rules: str | None = None, examples: list | None =
         "OUTPUT FORMAT:",
         ct.format_for(platform),
         "",
-        f"Write exactly {brief.versions} different version(s), each with a different angle. "
+        f"Write exactly {brief.versions} version(s). EVERY version must include ALL of the key "
+        "qualities listed in the brief. Make the versions differ in hook, angle and wording, "
+        "never in which key qualities they cover. Use the extra notes only if there is space. "
         f"Put the line {VERSION_SEPARATOR} between versions. "
         "Output only the copy itself: no version numbers, notes or explanations.",
     ]
@@ -358,6 +362,10 @@ REFINE_ACTIONS = {
     "Make it longer": (
         "Make it about 25% longer by using more of the key qualities from the brief. "
         "Do not add any facts that are not in the brief."
+    ),
+    "Include all key qualities": (
+        "Make sure EVERY key quality from the brief appears in the copy, while staying within "
+        "the length target. Keep the hook and the offer."
     ),
     "Try a different hook": (
         "Keep everything else, but replace the opening hook with a different one "
@@ -417,6 +425,7 @@ def build_refine_prompt(brief: Brief, original: str, instruction: str,
 _FIX_GUIDANCE = (
     "If a number is not in the brief, remove it or replace it with a fact from the brief. "
     "If the offer is missing, include it exactly as given. "
+    "If a key quality is missing, work it in without dropping any other one. "
     "Respect the length target and every character limit."
 )
 
@@ -468,3 +477,12 @@ def build_batch_fix_prompt(brief: Brief, items: list, keep: str = "",
     user += ["BRIEF (for reference):", *_brief_lines(brief, ct, platform, length_text), "",
              "Write the revised version(s) now."]
     return "\n".join(system), "\n".join(user)
+
+
+def length_hint(ct: CopyType, length: str) -> str:
+    """Label for the length picker, e.g. '30 seconds (~70-85 words)'."""
+    rng = ct.word_ranges.get(length)
+    if not rng:
+        return length
+    lo, hi = rng
+    return f"{length} (up to ~{hi} words)" if lo <= 1 else f"{length} (~{lo}-{hi} words)"

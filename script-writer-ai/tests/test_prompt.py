@@ -153,3 +153,30 @@ def test_batch_fix_prompt_lists_each_version_with_its_problems():
     assert user.index("VERSION 1:") < user.index("First text?") < user.index("VERSION 2:")
     assert "- Problem A." in user and "- Problem C." in user
     assert "Steel bottle" in user                     # brief included for reference
+
+
+def test_prompt_demands_every_key_quality_in_every_version():
+    system, user = build_prompt(make_brief(), rules="r", examples=[])
+    assert "EVERY version must include ALL" in system and "never in which key qualities" in system
+    assert "ALL must appear" in user
+
+
+def test_extra_notes_are_marked_secondary():
+    _, user = build_prompt(make_brief(extra="weighs 200g"), rules="r", examples=[])
+    assert "use only if there is space" in user and "weighs 200g" in user
+
+
+def test_rules_files_carry_the_expert_feedback():
+    assert "ALL the key qualities" in load_rules("script")
+    assert "never in which key qualities" in load_rules("script")
+
+
+def test_include_all_qualities_refine_action():
+    assert "EVERY key quality" in refine_instruction("Include all key qualities")
+
+
+def test_length_hint_labels():
+    from prompt import get_copy_type, length_hint
+    assert length_hint(get_copy_type("script"), "30 seconds") == "30 seconds (~70-85 words)"
+    assert length_hint(get_copy_type("caption"), "Short") == "Short (up to ~30 words)"
+    assert length_hint(get_copy_type("ad"), "Medium") == "Medium (~40-60 words)"

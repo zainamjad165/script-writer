@@ -80,7 +80,7 @@ def test_checks_are_shown_for_each_version(monkeypatch):
 
 
 def test_clean_version_shows_passed_message(monkeypatch):
-    good = ("Tired of warm water? " + "word " * 72).strip()
+    good = ("Tired of warm water? Cold all day and leak-proof. " + "word " * 62).strip()
     at = generate_once(monkeypatch, good)
     assert any("Passed all automatic checks" in c.value for c in at.caption)
 
@@ -208,7 +208,7 @@ def test_free_fixes_cost_no_request(monkeypatch):
     assert any("Auto-fixed" in m.value for m in at.markdown)
 
 
-SHORTER = "Warm water again? This bottle keeps drinks cold for 24 hours. Free delivery today. Order now."
+SHORTER = "Warm water again? Cold for 24 hours, leak-proof, free delivery today. Order now."
 
 
 def test_shorter_refine_is_not_pushed_back_to_the_length_target(monkeypatch):
@@ -231,3 +231,28 @@ def test_refined_version_that_breaks_a_check_is_auto_fixed(monkeypatch):
     assert refine_gen.call_count == 2
     assert [c.value for c in at.code] == [GOOD_SCRIPT, SHORTER]
     assert any("auto-fixed" in m.value for m in at.markdown)
+
+
+def test_length_picker_shows_word_targets():
+    at = fresh()
+    options = at.selectbox(key="script_length").options
+    assert "30 seconds (~70-85 words)" in options
+
+
+def test_missing_key_quality_is_flagged_and_fixed_in_one_request(monkeypatch):
+    # draft covers only the 24-hour quality; the fix covers both
+    one_quality = ("Tired of warm water? This bottle keeps drinks cold for 24 hours. "
+                   "Get free delivery today. Tap the link and order now.")
+    at, gen = run_with(monkeypatch, [one_quality, GOOD_SCRIPT.replace("never leaks", "is leak-proof")])
+    assert gen.call_count == 2
+    assert "leak-proof" in [c.value for c in at.code][0]
+    assert any("Passed all automatic checks" in c.value for c in at.caption)
+
+
+def test_include_all_qualities_refine_action_sends_its_instruction(monkeypatch):
+    at, _ = run_with(monkeypatch, [GOOD_SCRIPT])
+    with patch("llm.generate", return_value=GOOD_SCRIPT) as refine_gen:
+        at.selectbox(key="ra_0").select("Include all key qualities")
+        at.button(key="refine_0").click().run(timeout=30)
+    assert not at.exception
+    assert "EVERY key quality" in refine_gen.call_args.args[1]

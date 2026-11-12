@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from checks import normalize_numbers, run_checks
+from checks import missing_qualities, normalize_numbers, run_checks
 from prompt import Brief, load_examples
 
 
@@ -140,3 +140,50 @@ def test_relax_lets_a_deliberately_shorter_or_longer_text_pass_the_length_check(
     assert has(run_checks(long, brief()), "target is")
     assert not has(run_checks(long, brief(), relax="longer"), "target is")
     assert has(run_checks(long, brief(), relax="shorter"), "target is")
+
+
+FAN = dict(product="Handheld fan", audience="Travellers", offer="", length="30 seconds",
+           qualities=["43,000 RPM motor", "9,000 mAh battery", "Built-in flashlight and power bank"])
+
+
+def fan_text(body):
+    return "Dreading the heat? " + body + " " + "word " * 40
+
+
+def test_quality_split_across_versions_is_caught():
+    only_one = fan_text("This fan spins at 43,000 RPM so you stay cool all day long.")
+    problems = run_checks(only_one, brief(**FAN))
+    assert has(problems, "key qualities may be missing")
+    assert has(problems, "9,000 mAh battery") and has(problems, "flashlight")
+    assert not has(problems, "43,000 RPM")
+
+
+def test_all_qualities_present_passes_even_when_worded_differently():
+    allq = fan_text("A 43000 RPM motor, a big 9,000 mAh battery, plus a flashlight that works as a power bank.")
+    assert not has(run_checks(allq, brief(**FAN)), "may be missing")
+
+
+def test_thousands_separator_does_not_cause_false_number_alarms():
+    assert not has(run_checks(fan_text("It has 43000 RPM, 9000 mAh, a flashlight and a power bank."),
+                              brief(**FAN)), "numbers")
+    assert not has(run_checks(fan_text("It has 43,000 RPM, 9,000 mAh, a flashlight and a power bank."),
+                              brief(**FAN)), "numbers")
+
+
+def test_text_only_quality_needs_half_its_words():
+    b = brief(qualities=["Leak-proof lid", "Sweat-resistant"], offer="")
+    assert missing_qualities("The lid never leaks and is sweat resistant.", b) == []
+    assert missing_qualities("Cold all day, with free delivery.", b) == ["Leak-proof lid", "Sweat-resistant"]
+
+
+def test_translated_copy_only_checks_numbers():
+    b = brief(language="Roman Urdu", qualities=["Leak-proof lid", "24 hours cold"], offer="")
+    assert missing_qualities("Ye bottle 24 ghante thanda rakhti hai", b) == []
+    assert missing_qualities("Ye bottle band rehti hai, leak nahi hoti", b) == ["24 hours cold"]
+
+
+def test_short_captions_and_google_ads_skip_the_coverage_check():
+    cap = brief(copy_type="caption", length="Short", platform="Instagram", offer="", **{})
+    assert not has(run_checks("Cool bottle", cap), "key qualities")
+    g = brief(copy_type="ad", platform="Google search ad", offer="")
+    assert not has(run_checks("HEADLINE 1: Cold bottle", g), "key qualities")

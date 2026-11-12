@@ -25,6 +25,9 @@ _HUNDREDS = rf"(?:(?:one|{_TWO_TO_NINETEEN})\s+hundred(?:\s+(?:and\s+)?{_BELOW_1
 SPELLED_NUMBER_RE = re.compile(rf"\b(?:{_HUNDREDS}|{_BELOW_100})\b", re.IGNORECASE)
 PERCENT_RE = re.compile(r"(\d)\s*(?:percent|per cent)\b", re.IGNORECASE)
 
+THOUSANDS_RE = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
+WORD_RE = re.compile(r"[a-z]{3,}")
+
 TOLERANCE = 0.15            # word counts may be 15% outside the target range
 MAX_HOOK_WORDS = 14         # rules say 12; allow a little slack
 FACEBOOK_HEADLINE_LIMIT = 40
@@ -62,6 +65,11 @@ def normalize_numbers(text: str) -> str:
     return PERCENT_RE.sub(r"\1%", text)
 
 
+def _numeric(text: str) -> str:
+    """Spelled-out numbers to digits, and '43,000' to '43000' so both spellings match."""
+    return THOUSANDS_RE.sub("", normalize_numbers(text))
+
+
 def _line_value(text: str, label: str) -> str:
     m = re.search(rf"^\s*{label}\s*:\s*(.+)$", text, re.IGNORECASE | re.MULTILINE)
     return m.group(1).strip() if m else ""
@@ -89,15 +97,43 @@ def _input_text(brief: Brief) -> str:
                      brief.extra, brief.keywords, brief.avoid])
 
 
+def missing_qualities(text: str, brief: Brief) -> list:
+    """Key qualities that do not seem to appear in the text.
+
+    Qualities with numbers must show all of their numbers. Word-only qualities need at least
+    half of their words to appear (matched on the first 4 letters, so 'leak-proof' matches
+    'leaks'). Word-only qualities are not checked when the copy is not in English, because
+    a translation would look 'missing' to this simple test."""
+    numeric_text = _numeric(text).lower()
+    text_numbers = set(NUMBER_RE.findall(numeric_text))
+    text_prefixes = {w[:4] for w in WORD_RE.findall(numeric_text)}
+    english = brief.language == "English"
+    missing = []
+    for quality in brief.qualities_clean:
+        q = _numeric(quality).lower()
+        numbers = NUMBER_RE.findall(q)
+        if numbers:
+            covered = all(n in text_numbers for n in numbers)
+        elif english:
+            words = [w for w in WORD_RE.findall(q) if len(w) >= 4]
+            needed = -(-len(words) // 2)          # half, rounded up
+            covered = not words or sum(w[:4] in text_prefixes for w in words) >= needed
+        else:
+            covered = True
+        if not covered:
+            missing.append(quality if len(quality) <= 40 else quality[:37] + "...")
+    return missing
+
+
 def run_checks(text: str, brief: Brief, relax: str = "") -> list:
     """relax="shorter" ignores a too-short result, relax="longer" ignores a too-long one
     (used after the user deliberately asked for a shorter or longer version)."""
     ct = get_copy_type(brief.copy_type)
     platform = brief.platform if brief.platform in ct.platforms else ct.platforms[0]
     out: list = []
-    normalized = normalize_numbers(text)      # spelled-out numbers become digits
+    normalized = _numeric(text)               # spelled-out numbers become digits
     lowered = normalized.lower()
-    given = normalize_numbers(_input_text(brief))
+    given = _numeric(_input_text(brief))
 
     # --- structure -------------------------------------------------------
     if ct.key == "script":
@@ -120,6 +156,13 @@ def run_checks(text: str, brief: Brief, relax: str = "") -> list:
         too_long = n > hi * (1 + TOLERANCE) and relax != "longer"
         if too_short or too_long:
             out.append(f"It has {n} words, but the target is {lo}-{hi}.")
+
+    # --- every key quality should appear (the expert's main feedback) -------
+    skip_coverage = is_google or (ct.key == "caption" and brief.length == "Short")
+    if not skip_coverage:
+        missing = missing_qualities(text, brief)
+        if missing:
+            out.append("These key qualities may be missing: " + "; ".join(missing) + ".")
 
     # --- hard limits -----------------------------------------------------
     out += limit_warnings(text, ct.key, platform)

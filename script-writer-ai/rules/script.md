@@ -2,7 +2,8 @@
 
 ## Structure (every script follows this order)
 1. HOOK: start with ONE question the viewer cares about (their problem or wish). Max 12 words.
-2. BODY: what the product offers: 2-3 qualities, written as benefits, not a feature list.
+2. BODY: weave ALL the buyer's key qualities into the body (usually 2-4), written as benefits,
+   not a feature list. A 30-second script has room for 3 qualities in one or two sentences each.
 3. END: the offer (only if the buyer gave one), then ONE clear call to action.
 
 ## Style

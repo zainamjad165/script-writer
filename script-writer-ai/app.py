@@ -14,7 +14,7 @@ from checks import run_checks
 from llm import DEFAULT_FALLBACK_MODELS, DEFAULT_MODEL, LLMError, generate
 from prompt import (
     COPY_TYPES, LANGUAGES, REFINE_ACTIONS, REFINE_RELAX, TONES, Brief, build_prompt, build_refine_prompt,
-    get_copy_type, parse_versions, refine_instruction, word_count,
+    get_copy_type, length_hint, parse_versions, refine_instruction, word_count,
 )
 
 BASE_DIR = Path(__file__).parent
@@ -115,7 +115,7 @@ with st.form("brief"):
                             placeholder="e.g. Cotton summer kurta for men")
     audience = st.text_input("Who is it for?*", key="audience",
                              placeholder="e.g. Young men, 18-30, Pakistan")
-    qualities = st.text_area("2-3 main qualities* (one per line)", key="qualities",
+    qualities = st.text_area("Key qualities* (one per line, 2-4 works best; ALL are used)", key="qualities",
                              placeholder="Soft breathable cotton\nDoes not shrink\nSizes S to XXL")
     offer = st.text_input("Offer or discount (optional)", key="offer",
                           placeholder="e.g. Free delivery this week")
@@ -123,7 +123,7 @@ with st.form("brief"):
     language = c1.selectbox("Language", list(LANGUAGES), key="language")
     lengths = list(ct.lengths)
     length = c2.selectbox(ct.length_label, lengths, index=lengths.index(ct.default_length),
-                          key=f"{ct.key}_length")
+                          key=f"{ct.key}_length", format_func=lambda k: length_hint(ct, k))
     c3, c4 = st.columns(2)
     tone = c3.selectbox("Tone", TONES, key="tone")
     platform = c4.selectbox("Platform", ct.platforms, key=f"{ct.key}_platform")
@@ -136,7 +136,7 @@ with st.form("brief"):
                 if ct.keywords_label else "")
     with st.expander("More options"):
         avoid = st.text_input("Words or claims to avoid", key="avoid")
-        extra = st.text_area("Anything else the AI should know?", key="extra")
+        extra = st.text_area("Extra details or specs (used only if there is space)", key="extra")
     submitted = st.form_submit_button(f"Write my {ct.noun}", type="primary",
                                       use_container_width=True)
 
@@ -262,11 +262,11 @@ if result:
                     sent = notify_developer(row, get_setting("DISCORD_WEBHOOK_URL"))
                     st.success("Saved and sent. Thank you!" if sent else "Saved. Thank you!")
 
-# data = feedback_csv_bytes(FEEDBACK_FILE)
-# if data:
-#     st.divider()
-#     st.download_button("⬇️ Download all reviews (CSV)", data, "feedback.csv", "text/csv")
-#     st.caption("Tip: on the free hosted version, saved reviews can disappear when the app "
-#                "restarts, so download them regularly and send the file to the developer.")
+data = feedback_csv_bytes(FEEDBACK_FILE)
+if data:
+    st.divider()
+    st.download_button("⬇️ Download all reviews (CSV)", data, "feedback.csv", "text/csv")
+    st.caption("Tip: on the free hosted version, saved reviews can disappear when the app "
+               "restarts, so download them regularly and send the file to the developer.")
 
 usage_box.caption(f"AI requests this session: {st.session_state.get('ai_requests', 0)}")
