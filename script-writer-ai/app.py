@@ -10,7 +10,7 @@ import streamlit as st
 
 from feedback import feedback_csv_bytes, notify_developer, save_feedback
 from autofix import auto_fix_many
-from checks import run_checks
+from checks import is_shot_list, run_checks, spoken_text
 from llm import DEFAULT_FALLBACK_MODELS, DEFAULT_MODEL, LLMError, generate
 from prompt import (
     COPY_TYPES, LANGUAGES, REFINE_ACTIONS, REFINE_RELAX, TONES, Brief, build_prompt, build_refine_prompt,
@@ -119,6 +119,11 @@ with st.form("brief"):
                              placeholder="Soft breathable cotton\nDoes not shrink\nSizes S to XXL")
     offer = st.text_input("Offer or discount (optional)", key="offer",
                           placeholder="e.g. Free delivery this week")
+    pain_points = st.text_area("Problems it solves (optional, one per line)", key="pain_points",
+                               placeholder="Water turns warm mid-workout\nCheap bottles leak in the bag")
+    cta = (st.text_input("Exact call to action (optional)", key="cta",
+                         placeholder="e.g. Tap the link in bio to get 15% off")
+           if ct.supports_cta else "")
     c1, c2 = st.columns(2)
     language = c1.selectbox("Language", list(LANGUAGES), key="language")
     lengths = list(ct.lengths)
@@ -127,6 +132,14 @@ with st.form("brief"):
     c3, c4 = st.columns(2)
     tone = c3.selectbox("Tone", TONES, key="tone")
     platform = c4.selectbox("Platform", ct.platforms, key=f"{ct.key}_platform")
+    fmt_choice, shots = "", ""
+    if ct.formats:
+        fmt_choice = st.selectbox("Format", list(ct.formats), key=f"{ct.key}_format",
+                                  help="Shot-by-shot gives timestamps with a visual, voiceover "
+                                       "and on-screen text for each segment.")
+        shots = st.text_area("Shots you can film (optional, used for shot-by-shot)",
+                             key=f"{ct.key}_shots",
+                             placeholder="gym floor, pouring ice water, dropping the bottle")
     toggle_values = {}
     if ct.toggles:
         for col, (tkey, toggle) in zip(st.columns(len(ct.toggles)), ct.toggles.items()):
@@ -145,7 +158,8 @@ if submitted:
         product=product, audience=audience, qualities=qualities.splitlines(), offer=offer,
         language=language, length=length, tone=tone, platform=platform, avoid=avoid,
         extra=extra, versions=n_versions, copy_type=ct.key, toggles=toggle_values,
-        keywords=keywords,
+        keywords=keywords, format=fmt_choice, pain_points=pain_points.splitlines(),
+        shots=shots, cta=cta,
     )
     missing = brief.missing()
     if missing:
@@ -180,7 +194,9 @@ if result:
         n = idx + 1
         copy = item["text"]
         note = f"  ·  {item['note']}" if item["note"] else ""
-        st.markdown(f"**Version {n}**{note}  ·  {word_count(copy)} words · {len(copy)} characters")
+        spoken = spoken_text(copy, brief)
+        unit = "spoken words" if is_shot_list(brief) else "words"
+        st.markdown(f"**Version {n}**{note}  ·  {word_count(spoken)} {unit} · {len(copy)} characters")
         st.code(copy, language=None, wrap_lines=True)  # copy button built in
 
         relax = item.get("relax", "")
@@ -251,7 +267,8 @@ if result:
                 if st.form_submit_button("Save review"):
                     row = {
                         "time": datetime.now().isoformat(timespec="seconds"),
-                        "copy_type": result_type.label, "platform": brief.platform,
+                        "copy_type": result_type.label, "format": brief.format,
+                        "platform": brief.platform,
                         "product": brief.product, "audience": brief.audience,
                         "qualities": " | ".join(brief.qualities_clean), "offer": brief.offer,
                         "language": brief.language, "length": brief.length, "tone": brief.tone,

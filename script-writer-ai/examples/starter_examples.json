@@ -1,22 +1,30 @@
 [
   {
     "note": "Starter example written as a placeholder. Replace with real expert scripts.",
+    "type": "script",
+    "format": "Voiceover only",
     "language": "English",
     "length": "30 seconds",
     "brief": {
-      "product": "Insulated steel water bottle",
-      "audience": "Students and office workers",
+      "product": "Standing desk converter",
+      "audience": "Remote workers who sit all day",
       "qualities": [
-        "Keeps drinks cold for 24 hours",
-        "Leak-proof lid",
-        "Fits in bag side pocket"
+        "Six height settings",
+        "Fits two monitors",
+        "Folds flat in 10 seconds"
       ],
-      "offer": "Free delivery this week"
+      "pain_points": [
+        "Sore back by mid-afternoon",
+        "Tiny desk with no spare room"
+      ],
+      "offer": "Free shipping this week"
     },
-    "script": "Tired of lukewarm water by lunchtime? Meet the steel bottle that keeps your drink ice-cold for 24 hours, even on the hottest day. The lid is fully leak-proof, so your books and laptop stay dry no matter how the bag gets tossed around. It also slides right into your bag's side pocket, so it's always within reach during class or a long meeting. Order this week and get free delivery. Tap the link below and grab yours today."
+    "script": "Would your desk survive a full workday without your back filing a complaint? Mine never did, until this converter landed on top of it. One lift and I'm standing, with six height settings so I can find the one that feels right. Two monitors still fit comfortably, which surprised me. And when work is done, it folds flat in ten seconds, so my tiny desk is just a desk again. Free shipping this week only. Tap the link and stand up for yourself."
   },
   {
     "note": "Starter example written as a placeholder. Replace with real expert scripts.",
+    "type": "script",
+    "format": "Voiceover only",
     "language": "Roman Urdu",
     "length": "30 seconds",
     "brief": {
@@ -27,12 +35,17 @@
         "Does not shrink after wash",
         "Sizes S to XXL"
       ],
+      "pain_points": [
+        "Kapray garmi mein chipak jate hain"
+      ],
       "offer": "Cash on delivery available"
     },
-    "script": "Garmi mein kapray chipakne se tang aa gaye? Ye cotton kurta bilkul halka aur breathable hai, isliye poora din pehen kar bhi araam milta hai. Kapra naram hai aur dhone ke baad sikarta bhi nahi, to pehle din jaisa fit hamesha rehta hai. Aur sab se acchi baat, S se XXL tak har size mojood hai, to apka size zaroor mil jaye ga. Cash on delivery bhi available hai, yani pehle dekhein, phir payment karein. Abhi order karein, link neeche diya gaya hai."
+    "script": "Dopehar ki garmi mein kya aap ka kurta kamar se chipak jata hai? Ye cotton kurta itna halka aur naram hai ke poora din hawa guzarti rehti hai. Dhone ke baad bhi ye sikarta nahi, to size hamesha waisa hi rehta hai jaisa pehle din tha. S se XXL tak har size mojood hai, to apka naap zaroor mil jaye ga. Cash on delivery available hai, yani pehle dekhein phir payment karein. Abhi link par tap karein aur order karein."
   },
   {
     "note": "Starter example written as a placeholder. Replace with real expert scripts.",
+    "type": "script",
+    "format": "Voiceover only",
     "language": "English",
     "length": "15 seconds",
     "brief": {
@@ -45,5 +58,29 @@
       "offer": "10% off first order"
     },
     "script": "Birthday tomorrow and no cake yet? Ours is baked fresh the same day with real Belgian chocolate, so every slice tastes like a celebration. Get 10% off your first order. Message us now and we'll take care of the rest."
+  },
+  {
+    "note": "Starter example written as a placeholder. Replace with real expert shot lists.",
+    "type": "script",
+    "format": "Shot-by-shot (timestamps)",
+    "language": "English",
+    "length": "30 seconds",
+    "platform": "Instagram Reels",
+    "brief": {
+      "product": "Trail running shoes",
+      "audience": "Trail runners and hikers",
+      "qualities": [
+        "Grips wet rock and mud",
+        "Weighs only 240 grams",
+        "Dries in under an hour"
+      ],
+      "pain_points": [
+        "Slipping on wet trails",
+        "Heavy shoes that tire your legs"
+      ],
+      "shots": "trail run, splashing through a stream, close-up of the sole, shoe on a kitchen scale",
+      "offer": "20% off launch week"
+    },
+    "script": "0-3s\nVISUAL: Runner sprints into a stream and slams one shoe down on a slick, algae-covered rock.\nVOICEOVER: This rock ends most trail runs. Watch.\nON-SCREEN TEXT: WET ROCK TEST\n\n3-10s\nVISUAL: Slow-motion close-up of the sole gripping the rock, then the runner pushing off cleanly.\nVOICEOVER: No slip, no wobble. The sole bites into slick rock and mud like it's dry pavement.\nON-SCREEN TEXT: GRIP THAT HOLDS\n\n10-18s\nVISUAL: Runner powers up a steep hill, then a cut to the shoe resting on a kitchen scale.\nVOICEOVER: And the whole shoe weighs just 240 grams, so your legs still feel fresh when you reach the top.\nON-SCREEN TEXT: 240g\n\n18-24s\nVISUAL: Runner wades through the stream, then holds the soaked shoes up to the sun.\nVOICEOVER: Soaked halfway through the run? They're dry again within the hour.\nON-SCREEN TEXT: DRIES FAST\n\n24-30s\nVISUAL: Runner crosses the finish line, then a product shot with the launch badge.\nVOICEOVER: Launch week only. Tap the link in bio and take twenty percent off.\nON-SCREEN TEXT: 20% OFF - LAUNCH WEEK"
   }
 ]

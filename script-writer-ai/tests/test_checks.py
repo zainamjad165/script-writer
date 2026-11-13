@@ -3,7 +3,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from checks import missing_qualities, normalize_numbers, run_checks
+from checks import (copied_phrases, missing_qualities, normalize_numbers, run_checks,
+                    shot_list_problems, spoken_text)
 from prompt import Brief, load_examples
 
 
@@ -15,7 +16,7 @@ def brief(**kw):
     return Brief(**base)
 
 
-GOOD_SCRIPT = ("Tired of warm water? This steel bottle keeps drinks cold for 24 hours and the "
+GOOD_SCRIPT = ("Why settle for warm water? This steel bottle keeps drinks cold for 24 hours and the "
                "lid never leaks, so your bag stays dry all day long. Get free delivery today. "
                "Tap the link and order now.")
 
@@ -34,7 +35,9 @@ def test_every_starter_example_passes_its_own_checks():
         br = Brief(product=b["product"], audience=b["audience"], qualities=b["qualities"],
                    offer=b.get("offer", ""), language=e.get("language", "English"),
                    length=e.get("length", ""), platform=e.get("platform", ""),
-                   copy_type=e.get("type", "script"))
+                   copy_type=e.get("type", "script"), format=e.get("format", ""),
+                   pain_points=b.get("pain_points", []), shots=b.get("shots", ""),
+                   cta=b.get("cta", ""))
         assert run_checks(e["script"], br) == [], (e.get("type"), e.get("length"))
 
 
@@ -120,7 +123,7 @@ def test_spelled_out_numbers_are_understood():
 def test_offer_written_in_words_counts_as_present():
     earbuds = brief(offer="20% off this weekend", length="30 seconds",
                     qualities=["8 hours of playback, 32 hours with the case"])
-    text = ("Tired of dead earbuds mid-workout? " + "word " * 55 +
+    text = ("Why settle for dead earbuds mid-workout? " + "word " * 55 +
             "eight hours of music, plus thirty-two more in the case. "
             "Get twenty percent off this weekend. Tap the link.")
     problems = run_checks(text, earbuds)
@@ -187,3 +190,128 @@ def test_short_captions_and_google_ads_skip_the_coverage_check():
     assert not has(run_checks("Cool bottle", cap), "key qualities")
     g = brief(copy_type="ad", platform="Google search ad", offer="")
     assert not has(run_checks("HEADLINE 1: Cold bottle", g), "key qualities")
+
+
+# ---------------------------------------------------------------------------
+# Feedback from a professional copywriter (ApexHydro bottle brief)
+# ---------------------------------------------------------------------------
+APEX = dict(
+    product="ApexHydro Pro 32oz (1 Liter) Insulated Sports Bottle",
+    audience="Gym-goers, runners and outdoor athletes, 18-35",
+    qualities=["24-Hour Ice Lock: double-wall vacuum-insulated stainless steel keeps water ice-cold in 40C heat",
+               "Zero-Leak Locking Lid: throw it upside down in a gym bag with zero spills",
+               "One-Handed Magnetic Chug Cap: flips open with one thumb mid-set and snaps back magnetically",
+               "Impact-Resistant Silicone Base: doesn't dent or clang loudly when dropped"],
+    pain_points=["Water turning lukewarm 20 minutes into a workout", "Cheap bottles leaking"],
+    offer="15% off + free shipping", extra="Price: $34", length="30 seconds",
+    copy_type="script", platform="Instagram Reels",
+)
+
+TOOL_OUTPUT_1 = ("Tired of lukewarm water ruining your workout? The ApexHydro Pro 32oz uses double-wall vacuum "
+                 "insulation to keep water ice-cold for 24 hours. Toss it upside down in your gym bag; the zero-leak "
+                 "locking lid prevents spills. Mid-set, flip the magnetic chug cap open with one thumb for a fast "
+                 "drink. Plus, the impact-resistant silicone base stops loud clangs when dropped. Get yours for $34 "
+                 "with 15 percent off and free shipping. Tap the link in bio to grab yours!")
+TOOL_OUTPUT_2 = ("Sick of cheap bottles leaking all over your gym bag? Upgrade to the ApexHydro Pro 32oz. Double-wall "
+                 "vacuum-insulated stainless steel locks in ice-cold water for 24 hours straight. Throw it right into "
+                 "your bag because the zero-leak locking lid is completely secure. When you need a fast drink, the "
+                 "magnetic chug cap flips open with one hand. The impact-resistant silicone base prevents loud dings. "
+                 "Get it for $34 with 15 percent off and free shipping. Tap the link in bio!")
+TOOL_OUTPUT_3 = ("Why drink warm water during your heavy session? The ApexHydro Pro 32oz keeps your drink ice-cold for "
+                 "24 hours with double-wall vacuum insulation. Toss it carelessly into your gym bag; the zero-leak "
+                 "locking lid ensures your gear stays dry. Between sets, pop the magnetic chug cap open with a single "
+                 "thumb for instant hydration. Even if you drop it, the impact-resistant silicone base absorbs the "
+                 "impact silently. Grab yours for $34 with 15 percent off and free shipping. Tap the link in bio!")
+
+
+def test_the_professionals_three_outputs_are_now_caught():
+    b = brief(**APEX)
+    for text in (TOOL_OUTPUT_1, TOOL_OUTPUT_2, TOOL_OUTPUT_3):
+        problems = run_checks(text, b)
+        assert has(problems, "price is read out loud"), problems
+    assert has(run_checks(TOOL_OUTPUT_1, b), "cliché")       # "Tired of ..."
+    assert has(run_checks(TOOL_OUTPUT_2, b), "cliché")       # "Sick of ..."
+    assert not has(run_checks(TOOL_OUTPUT_3, b), "cliché")
+    assert has(run_checks(TOOL_OUTPUT_2, b), "straight from your spec lines")  # lifted spec wording
+
+
+def test_cliche_openers_are_only_checked_for_english():
+    text = "Tired of this? " + "word " * 70
+    assert has(run_checks(text, brief(offer="", length="30 seconds")), "cliché")
+    assert not has(run_checks(text, brief(offer="", length="30 seconds", language="Roman Urdu")), "cliché")
+
+
+def test_reworded_quality_is_not_flagged_as_missing():
+    b = brief(qualities=["Zero-Leak Locking Lid", "Impact-Resistant Silicone Base"], offer="")
+    text = "Why settle? The lid never leaks in your bag and the base shrugs off drops. " + "word " * 15
+    assert missing_qualities(text, b) == []
+
+
+def test_spoken_price_is_allowed_when_the_buyer_put_it_in_the_offer():
+    text = "Why settle for less? " + "word " * 35 + "Get it for $34 today."
+    assert has(run_checks(text, brief(offer="", length="15 seconds")), "price is read out loud")
+    assert not has(run_checks(text, brief(offer="Only $34 today", length="15 seconds")), "price is read out")
+
+
+def test_copied_phrases_ignore_numbers_and_short_overlaps():
+    b = brief(qualities=["Keeps cold for 24 hours", "Zero-leak locking lid"])
+    assert copied_phrases("It keeps drinks cold for 24 hours.", b) == []
+    assert copied_phrases("The zero leak locking lid is secure.", b) == ["zero leak locking lid"]
+
+
+# ---------- shot-by-shot ----------
+SHOT = dict(format="Shot-by-shot (timestamps)", length="30 seconds", offer="15% off",
+            qualities=["Keeps drinks cold for 24 hours", "Never leaks in a bag"], copy_type="script",
+            platform="Instagram Reels")
+VALID_SHOT_LIST = """0-3s
+VISUAL: Runner shakes the open bottle upside down over a gym bag.
+VOICEOVER: If your bottle can't survive this, bin it.
+ON-SCREEN TEXT: TEST YOUR BOTTLE
+
+3-10s
+VISUAL: Ice cubes clink inside the bottle after a long day in the sun.
+VOICEOVER: Still ice cold after twenty-four hours, even in a heatwave, and nothing leaks into your bag.
+ON-SCREEN TEXT: 24 HOURS COLD
+
+10-20s
+VISUAL: Close-up of the cap flipping open with one thumb.
+VOICEOVER: One thumb opens it mid-set, and the cap stays out of your face while you drink. No stopping, no fiddling, no wasted rest time between sets.
+ON-SCREEN TEXT: ONE-HAND CAP
+
+20-30s
+VISUAL: Athlete walks out of the gym with the bottle, product shot.
+VOICEOVER: Grab yours while the launch batch lasts. Tap the link in bio for 15% off before it sells out.
+ON-SCREEN TEXT: 15% OFF"""
+
+
+def test_valid_shot_list_passes():
+    b = brief(**SHOT)
+    assert run_checks(VALID_SHOT_LIST, b) == []
+    assert shot_list_problems(VALID_SHOT_LIST, b) == []
+
+
+def test_shot_list_hook_does_not_have_to_be_a_question_and_timestamps_are_not_numbers_to_verify():
+    problems = run_checks(VALID_SHOT_LIST, brief(**SHOT))
+    assert not has(problems, "isn't a question") and not has(problems, "numbers")
+
+
+def test_word_count_for_shot_lists_uses_the_voiceover_only():
+    b = brief(**SHOT)
+    words = len(spoken_text(VALID_SHOT_LIST, b).split())
+    assert 59 <= words <= 98 and len(VALID_SHOT_LIST.split()) > words
+
+
+def test_shot_list_structure_problems():
+    b = brief(**SHOT)
+    assert has(shot_list_problems("Just a paragraph of voiceover.", b), "isn't a timestamped shot list")
+    assert has(shot_list_problems(VALID_SHOT_LIST.replace("3-10s", "5-10s"), b), "gap or overlap")
+    assert has(shot_list_problems(VALID_SHOT_LIST.replace("20-30s", "20-24s"), b), "ends at 24s")
+    assert has(shot_list_problems(VALID_SHOT_LIST.replace("0-3s", "0-7s").replace("3-10s", "7-10s"), b),
+               "hook segment runs 7s")
+    broken = VALID_SHOT_LIST.replace("VOICEOVER: One thumb", "NOTE: One thumb")
+    assert has(shot_list_problems(broken, b), "missing a VISUAL or VOICEOVER")
+
+
+def test_a_cliche_hook_is_caught_in_the_first_voiceover_line_of_a_shot_list():
+    cliche = VALID_SHOT_LIST.replace("If your bottle can't survive this, bin it.", "Tired of warm water? Bin it.")
+    assert has(run_checks(cliche, brief(**SHOT)), "cliché")

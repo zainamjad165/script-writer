@@ -180,3 +180,65 @@ def test_length_hint_labels():
     assert length_hint(get_copy_type("script"), "30 seconds") == "30 seconds (~70-85 words)"
     assert length_hint(get_copy_type("caption"), "Short") == "Short (up to ~30 words)"
     assert length_hint(get_copy_type("ad"), "Medium") == "Medium (~40-60 words)"
+
+
+def test_shot_by_shot_format_is_requested_only_when_chosen():
+    shot = build_prompt(make_brief(format="Shot-by-shot (timestamps)", length="30 seconds"),
+                        rules="r", examples=[])
+    assert "VISUAL:" in shot[0] and "ON-SCREEN TEXT:" in shot[0] and "0-3s" in shot[0]
+    assert "Format: Shot-by-shot (timestamps)" in shot[1]
+    plain = build_prompt(make_brief(), rules="r", examples=[])
+    assert "VISUAL:" not in plain[0] and "Format: Voiceover only" in plain[1]
+
+
+def test_each_version_gets_its_own_angle_and_formats_have_different_angles():
+    system, _ = build_prompt(make_brief(versions=3), rules="r", examples=[])
+    assert "Version 1:" in system and "Version 2:" in system and "Version 3:" in system
+    assert "do not just swap synonyms" in system
+    shot, _ = build_prompt(make_brief(versions=3, format="Shot-by-shot (timestamps)"), rules="r", examples=[])
+    assert "Challenge or demo" in shot and "Challenge or demo" not in system
+    one, _ = build_prompt(make_brief(versions=1), rules="r", examples=[])
+    assert "Version 1:" in one and "Version 2:" not in one
+
+
+def test_every_copy_type_has_angles():
+    for ct in COPY_TYPES.values():
+        assert len(ct.angles_for("")) == 3 or ct.key == "script"
+
+
+def test_pain_points_shots_and_cta_reach_the_prompt_only_where_they_apply():
+    b = make_brief(pain_points=["Warm water", " "], shots="gym floor, pouring ice",
+                   cta="Tap the link in bio", format="Shot-by-shot (timestamps)")
+    _, user = build_prompt(b, rules="r", examples=[])
+    assert "Problems it solves" in user and "- Warm water" in user
+    assert "gym floor, pouring ice" in user and "Tap the link in bio" in user
+    _, voice = build_prompt(make_brief(shots="gym floor", cta="Tap the link"), rules="r", examples=[])
+    assert "gym floor" not in voice                       # shots only matter for shot lists
+    _, product = build_prompt(make_brief(copy_type="product", cta="Tap the link"), rules="r", examples=[])
+    assert "Tap the link" not in product                  # product descriptions have no CTA box
+
+
+def test_examples_are_matched_to_the_chosen_format():
+    exs = load_examples()
+    shot = pick_examples(make_brief(format="Shot-by-shot (timestamps)"), exs)
+    assert shot and all(e.get("format") == "Shot-by-shot (timestamps)" for e in shot)
+    voice = pick_examples(make_brief(), exs)
+    assert voice and all(e.get("format", "Voiceover only") == "Voiceover only" for e in voice)
+
+
+def test_shot_example_brief_details_are_shown_to_the_model():
+    system, _ = build_prompt(make_brief(format="Shot-by-shot (timestamps)", language="English"),
+                             rules="r")
+    assert "problems it solves=" in system and "shots available=" in system
+
+
+def test_new_refine_action_and_tone():
+    from prompt import TONES
+    assert "person talking" in refine_instruction("Sound less like a spec sheet")
+    assert "High-energy / punchy" in TONES
+
+
+def test_rules_carry_the_professional_feedback():
+    general = load_rules("script")
+    assert "No cliché openings" in general and "Never read a price out loud" in general
+    assert "Shot-by-shot" in general and "ON-SCREEN TEXT" in general

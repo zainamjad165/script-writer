@@ -63,7 +63,7 @@ def test_google_ad_over_limit_shows_warning(monkeypatch):
     assert any("40 characters" in w.value for w in at.warning)
 
 
-def generate_once(monkeypatch, text="Tired of warm water?\n===VERSION===\nSecond hook?"):
+def generate_once(monkeypatch, text="Why settle for warm water?\n===VERSION===\nSecond hook?"):
     monkeypatch.setenv("GEMINI_API_KEY", "fake")
     with patch("llm.generate", return_value=text):
         at = fresh()
@@ -80,7 +80,7 @@ def test_checks_are_shown_for_each_version(monkeypatch):
 
 
 def test_clean_version_shows_passed_message(monkeypatch):
-    good = ("Tired of warm water? Cold all day and leak-proof. " + "word " * 62).strip()
+    good = ("Why settle for warm water? Cold all day and leak-proof. " + "word " * 62).strip()
     at = generate_once(monkeypatch, good)
     assert any("Passed all automatic checks" in c.value for c in at.caption)
 
@@ -92,7 +92,7 @@ def test_refine_adds_a_new_version_and_keeps_the_old_one(monkeypatch):
         at.button(key="refine_0").click().run(timeout=30)
     assert not at.exception
     codes = [c.value for c in at.code]
-    assert codes == ["Tired of warm water?", "Second hook?", "Cold water all day?"]
+    assert codes == ["Why settle for warm water?", "Second hook?", "Cold water all day?"]
     assert any("Refined from version 1 (Make it shorter)" in m.value for m in at.markdown)
 
 
@@ -113,9 +113,9 @@ def test_refine_error_is_shown_and_nothing_added(monkeypatch):
     assert len(at.code) == 2
 
 
-BAD_SCRIPT = ("Tired of warm water? This bottle keeps drinks cold for 99 hours and never leaks. "
+BAD_SCRIPT = ("Why settle for warm water? This bottle keeps drinks cold for 99 hours and never leaks. "
               + "word " * 20 + "Tap the link and order now.")
-GOOD_SCRIPT = ("Tired of warm water? This steel bottle keeps drinks cold for 24 hours and the lid "
+GOOD_SCRIPT = ("Why settle for warm water? This steel bottle keeps drinks cold for 24 hours and the lid "
                "never leaks, so your bag stays dry all day long. Get free delivery today. "
                "Tap the link and order now.")
 
@@ -177,7 +177,7 @@ SEP = "\n===VERSION===\n"
 
 def test_failing_versions_are_fixed_in_a_single_extra_request(monkeypatch):
     bad2 = BAD_SCRIPT.replace("99", "77")
-    fix_a, fix_b = GOOD_SCRIPT, GOOD_SCRIPT.replace("Tired of warm water?", "Warm water again?")
+    fix_a, fix_b = GOOD_SCRIPT, GOOD_SCRIPT.replace("Why settle for warm water?", "Warm water again?")
     at, gen = run_with(monkeypatch, [GOOD_SCRIPT + SEP + BAD_SCRIPT + SEP + bad2, fix_a + SEP + fix_b])
     assert gen.call_count == 2                        # 1 draft request + 1 batch fix, not 1 + 2
     assert [c.value for c in at.code] == [GOOD_SCRIPT, fix_a, fix_b]
@@ -241,7 +241,7 @@ def test_length_picker_shows_word_targets():
 
 def test_missing_key_quality_is_flagged_and_fixed_in_one_request(monkeypatch):
     # draft covers only the 24-hour quality; the fix covers both
-    one_quality = ("Tired of warm water? This bottle keeps drinks cold for 24 hours. "
+    one_quality = ("Why settle for warm water? This bottle keeps drinks cold for 24 hours. "
                    "Get free delivery today. Tap the link and order now.")
     at, gen = run_with(monkeypatch, [one_quality, GOOD_SCRIPT.replace("never leaks", "is leak-proof")])
     assert gen.call_count == 2
@@ -256,3 +256,55 @@ def test_include_all_qualities_refine_action_sends_its_instruction(monkeypatch):
         at.button(key="refine_0").click().run(timeout=30)
     assert not at.exception
     assert "EVERY key quality" in refine_gen.call_args.args[1]
+
+
+def test_script_form_has_format_shots_cta_and_pain_points_but_other_types_do_not_have_format():
+    at = fresh()
+    assert at.selectbox(key="script_format").options == ["Voiceover only", "Shot-by-shot (timestamps)"]
+    assert at.text_area(key="script_shots") and at.text_input(key="cta") and at.text_area(key="pain_points")
+    at.selectbox(key="copy_type_label").select("Product description").run(timeout=30)
+    assert not at.get("selectbox") or all(sb.key != "product_format" for sb in at.selectbox)
+    assert not any(t.key == "cta" for t in at.text_input)      # no call-to-action box for products
+
+
+SHOT_LIST = """0-3s
+VISUAL: Runner shakes the bottle over a gym bag.
+VOICEOVER: If your bottle can't survive this, bin it.
+ON-SCREEN TEXT: TEST YOUR BOTTLE
+
+3-12s
+VISUAL: Ice cubes clink in the bottle after a hot day.
+VOICEOVER: Still ice cold after twenty-four hours, and it never leaks into your bag, even upside down.
+ON-SCREEN TEXT: 24 HOURS COLD
+
+12-21s
+VISUAL: One thumb flips the cap open mid-set.
+VOICEOVER: Keep your rest short and your hands free, because the cap opens with one thumb and stays out of your face.
+ON-SCREEN TEXT: ONE-HAND CAP
+
+21-30s
+VISUAL: Athlete walks out with the bottle, product shot.
+VOICEOVER: Grab yours while the launch batch lasts. Free delivery is on, so tap the link in bio.
+ON-SCREEN TEXT: FREE DELIVERY"""
+
+
+def test_shot_by_shot_request_reaches_the_ai_and_shows_spoken_words(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    with patch("llm.generate", return_value=SHOT_LIST) as gen:
+        at = fresh()
+        at.selectbox(key="script_format").select("Shot-by-shot (timestamps)")
+        at.text_input(key="product").set_value("Steel bottle")
+        at.text_input(key="audience").set_value("Athletes")
+        at.text_area(key="qualities").set_value("Keeps cold for 24 hours\nNever leaks in a bag")
+        at.text_input(key="offer").set_value("Free delivery")
+        at.text_area(key="pain_points").set_value("Warm water mid-workout\nLeaky bags")
+        at.text_area(key="script_shots").set_value("gym floor, ice cubes")
+        at.text_input(key="cta").set_value("Tap the link in bio")
+        at.button[0].click().run(timeout=30)
+    assert not at.exception
+    system, user = gen.call_args_list[0].args[0], gen.call_args_list[0].args[1]
+    assert "VISUAL:" in system and "Format: Shot-by-shot (timestamps)" in user
+    assert "Warm water mid-workout" in user and "gym floor, ice cubes" in user
+    assert "Tap the link in bio" in user
+    assert any("spoken words" in m.value for m in at.markdown)
+    assert [c.value for c in at.code] == [SHOT_LIST]

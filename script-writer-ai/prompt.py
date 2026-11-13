@@ -26,7 +26,24 @@ LANGUAGES = {
     ),
 }
 
-TONES = ["Friendly", "Professional", "Funny", "Luxury / premium", "Urgent / exciting", "Emotional"]
+TONES = ["Friendly", "High-energy / punchy", "Professional", "Funny", "Luxury / premium",
+         "Urgent / exciting", "Emotional"]
+
+
+VO_ONLY = "Voiceover only"
+SHOT_BY_SHOT = "Shot-by-shot (timestamps)"
+
+_SHOT_FORMAT = (
+    "A timestamped shot list that runs back to back from 0s to the full length "
+    "(3-4 segments for 15 seconds, 4-6 for 30 seconds, 6-9 for 60 seconds). "
+    "Write every segment with exactly these labeled lines:\n"
+    "0-3s\n"
+    "VISUAL: (what the camera shows; only things that can realistically be filmed)\n"
+    "VOICEOVER: (what is said out loud: one or two short, natural spoken sentences)\n"
+    "ON-SCREEN TEXT: (1-5 words; put prices and discounts here, not in the voiceover)\n"
+    "The first segment (0-3s) is the hook: a strong visual plus a spoken line that stops "
+    "the scroll. The last segment is the call to action."
+)
 
 
 @dataclass(frozen=True)
@@ -50,9 +67,17 @@ class CopyType:
     keywords_label: str = ""   # if set, the form shows a keywords box with this label
     length_label: str = "Length"
     word_ranges: dict = field(default_factory=dict)  # length label -> (min, max) words
+    formats: dict = field(default_factory=dict)      # format label -> exact output format
+    angles: dict = field(default_factory=dict)       # "*" or a format label -> tuple of angles
+    supports_cta: bool = False                       # show the "exact call to action" box
 
-    def format_for(self, platform: str) -> str:
+    def format_for(self, platform: str, fmt: str = "") -> str:
+        if fmt in self.formats:
+            return self.formats[fmt]
         return self.output_format.get(platform, self.output_format["*"])
+
+    def angles_for(self, fmt: str = "") -> tuple:
+        return self.angles.get(fmt) or self.angles.get("*", ())
 
 
 _FB_AD_FORMAT = (
@@ -76,6 +101,23 @@ COPY_TYPES: dict = {
         platforms=["Instagram Reels", "TikTok", "YouTube Shorts", "Facebook ad", "General video"],
         output_format={"*": "The spoken voiceover text only, as plain paragraph(s)."},
         word_ranges={"15 seconds": (35, 45), "30 seconds": (70, 85), "60 seconds": (140, 170)},
+        formats={
+            VO_ONLY: "The spoken voiceover text only, as plain paragraph(s).",
+            SHOT_BY_SHOT: _SHOT_FORMAT,
+        },
+        angles={
+            "*": (
+                "Open with a question that dares or tests the viewer, something they can picture right away.",
+                "Open with a question that describes the exact annoying moment in the viewer's own words.",
+                "Open with a question that challenges something the viewer takes for granted.",
+            ),
+            SHOT_BY_SHOT: (
+                "Challenge or demo: the opening visual is a test or a dare, and the first spoken line is a confident statement or question.",
+                "Real-life moment: open mid-scene on the annoying situation, with a spoken line in the viewer's own words.",
+                "Bold claim: open on a striking visual with a confident, slightly provocative spoken line, then prove it.",
+            ),
+        },
+        supports_cta=True,
     ),
     "caption": CopyType(
         key="caption",
@@ -101,6 +143,12 @@ COPY_TYPES: dict = {
                              "Do not use any emojis."),
         },
         word_ranges={"Short": (1, 30), "Medium": (40, 70), "Long": (90, 150)},
+        angles={"*": (
+            "A short personal story or confession that leads to the product.",
+            "A direct question to the reader about their situation.",
+            "A bold one-line statement, then the proof.",
+        )},
+        supports_cta=True,
     ),
     "ad": CopyType(
         key="ad",
@@ -128,6 +176,12 @@ COPY_TYPES: dict = {
         keywords_label="Search keywords to include (optional)",
         length_label="Length (Facebook / Instagram only)",
         word_ranges={"Short": (20, 30), "Medium": (40, 60)},
+        angles={"*": (
+            "Pain first: start with the problem, then the fix.",
+            "Benefit first: start with the best result the customer gets.",
+            "Proof first: start with the strongest fact from the brief.",
+        )},
+        supports_cta=True,
     ),
     "product": CopyType(
         key="product",
@@ -152,6 +206,11 @@ COPY_TYPES: dict = {
         },
         keywords_label="Keywords to include naturally (optional)",
         word_ranges={"Short": (40, 60), "Standard": (80, 120), "Long": (150, 200)},
+        angles={"*": (
+            "Benefit-led: open with the main benefit.",
+            "Use-case-led: open with a short moment of everyday use.",
+            "Plain-language specs: open with the most important fact, explained simply.",
+        )},
     ),
 }
 
@@ -172,10 +231,16 @@ class Brief:
     copy_type: str = "script"
     toggles: dict = field(default_factory=dict)
     keywords: str = ""
+    format: str = ""                                   # e.g. "Shot-by-shot (timestamps)"
+    pain_points: list = field(default_factory=list)    # problems the product solves
+    shots: str = ""                                    # shots the buyer can film
+    cta: str = ""                                      # exact call to action, if given
     qualities_clean: list = field(init=False, default_factory=list)
+    pain_points_clean: list = field(init=False, default_factory=list)
 
     def __post_init__(self) -> None:
         self.qualities_clean = [q.strip() for q in self.qualities if q.strip()]
+        self.pain_points_clean = [q.strip() for q in self.pain_points if q.strip()]
 
     def missing(self) -> list:
         out = []
@@ -190,6 +255,13 @@ class Brief:
 
 def get_copy_type(key: str) -> CopyType:
     return COPY_TYPES.get(key) or COPY_TYPES["script"]
+
+
+def resolve_format(ct: CopyType, brief: Brief) -> str:
+    """The chosen output format label, or '' for types that have only one."""
+    if not ct.formats:
+        return ""
+    return brief.format if brief.format in ct.formats else next(iter(ct.formats))
 
 
 def _read(path: Path) -> str:
@@ -231,8 +303,15 @@ def load_examples(directory: Path = EXAMPLES_DIR) -> list:
 
 
 def pick_examples(brief: Brief, examples: list, limit: int = 3) -> list:
-    """Same copy type only; prefer the same language, then the same length."""
-    same_type = [e for e in examples if e.get("type", "script") == brief.copy_type]
+    """Same copy type (and output format) only; prefer the same language, then the same length."""
+    ct = get_copy_type(brief.copy_type)
+    fmt = resolve_format(ct, brief)
+    first_format = next(iter(ct.formats), "")
+    same_type = [
+        e for e in examples
+        if e.get("type", "script") == brief.copy_type
+        and (not ct.formats or e.get("format", first_format) == fmt)
+    ]
 
     def score(ex: dict) -> int:
         return (2 if ex.get("language") == brief.language else 0) + (
@@ -245,10 +324,13 @@ def pick_examples(brief: Brief, examples: list, limit: int = 3) -> list:
 def _format_example(ex: dict) -> str:
     b = ex["brief"]
     quals = "; ".join(b.get("qualities", []))
+    pains = "; ".join(b.get("pain_points", []))
+    extras = (f" | problems it solves={pains}" if pains else "") + (
+        f" | shots available={b['shots']}" if b.get("shots") else "")
     return (
         f"BRIEF: product={b.get('product', '')} | audience={b.get('audience', '')} | "
         f"qualities={quals} | offer={b.get('offer') or 'none'} | "
-        f"language={ex.get('language', '')} | length={ex.get('length', '')}\n"
+        f"language={ex.get('language', '')} | length={ex.get('length', '')}{extras}\n"
         f"OUTPUT:\n{ex['script']}"
     )
 
@@ -260,12 +342,21 @@ def _brief_lines(brief: Brief, ct: CopyType, platform: str, length_text: str) ->
         f"Target audience: {brief.audience.strip()}",
         "Key qualities (ALL must appear in the copy):",
         *[f"- {q}" for q in brief.qualities_clean],
+        *(["Problems it solves (use them for the hook: show the problem, don't just name it):",
+           *[f"- {p}" for p in brief.pain_points_clean]] if brief.pain_points_clean else []),
         f"Offer: {brief.offer.strip() or 'none given - do not invent one; end with a call to action only'}",
         f"Language: {brief.language}. {LANGUAGES.get(brief.language, '')}",
         f"Length: {length_text}",
         f"Tone: {brief.tone}",
         f"Platform: {platform}",
     ]
+    fmt = resolve_format(ct, brief)
+    if fmt:
+        lines.append(f"Format: {fmt}")
+    if fmt == SHOT_BY_SHOT and brief.shots.strip():
+        lines.append(f"Shots the buyer can film (use only these kinds of visuals): {brief.shots.strip()}")
+    if brief.cta.strip() and ct.supports_cta:
+        lines.append(f"Call to action to end with (keep its meaning and any offer in it): {brief.cta.strip()}")
     for key, toggle in ct.toggles.items():
         on = brief.toggles.get(key, toggle.default)
         instruction = toggle.when_on if on else toggle.when_off
@@ -289,6 +380,14 @@ def build_prompt(brief: Brief, rules: str | None = None, examples: list | None =
     examples = pick_examples(brief, load_examples() if examples is None else examples)
     length_text = ct.lengths.get(brief.length, ct.lengths[ct.default_length])
     platform = brief.platform if brief.platform in ct.platforms else ct.platforms[0]
+    fmt = resolve_format(ct, brief)
+    angles = ct.angles_for(fmt)
+    angle_text = ""
+    if angles:
+        listed = " ".join(f"Version {i + 1}: {angles[i % len(angles)]}" for i in range(brief.versions))
+        angle_text = (
+            "Give each version its own angle and structure (do not just swap synonyms): "
+            f"{listed} ")
 
     system = [
         f"You are an expert copywriter. Today you write: {ct.label.lower()}. "
@@ -307,11 +406,13 @@ def build_prompt(brief: Brief, rules: str | None = None, examples: list | None =
     system += [
         "",
         "OUTPUT FORMAT:",
-        ct.format_for(platform),
+        ct.format_for(platform, fmt),
         "",
         f"Write exactly {brief.versions} version(s). EVERY version must include ALL of the key "
-        "qualities listed in the brief. Make the versions differ in hook, angle and wording, "
-        "never in which key qualities they cover. Use the extra notes only if there is space. "
+        "qualities listed in the brief, but say them as what the customer sees, feels or does, "
+        "never as a spec list. Make the versions differ in hook, angle and wording, "
+        "never in which key qualities they cover. " + angle_text +
+        "Use the extra notes only if there is space. "
         f"Put the line {VERSION_SEPARATOR} between versions. "
         "Output only the copy itself: no version numbers, notes or explanations.",
     ]
@@ -363,6 +464,10 @@ REFINE_ACTIONS = {
         "Make it about 25% longer by using more of the key qualities from the brief. "
         "Do not add any facts that are not in the brief."
     ),
+    "Sound less like a spec sheet": (
+        "Rewrite it so it sounds like a person talking. Replace any phrases copied from the "
+        "brief's specs with what the customer sees, feels or does. Keep every fact and the offer."
+    ),
     "Include all key qualities": (
         "Make sure EVERY key quality from the brief appears in the copy, while staying within "
         "the length target. Keep the hook and the offer."
@@ -400,7 +505,7 @@ def build_refine_prompt(brief: Brief, original: str, instruction: str,
         rules or "(no rules file found - be clear, concrete and benefit-led)",
         "",
         "OUTPUT FORMAT:",
-        ct.format_for(platform),
+        ct.format_for(platform, resolve_format(ct, brief)),
         "",
         "Apply ONLY the requested change. Keep every fact, the offer and the call to action "
         "unless the change says otherwise. Never add facts, numbers or offers that are not in "
@@ -458,7 +563,7 @@ def build_batch_fix_prompt(brief: Brief, items: list, keep: str = "",
         rules or "(no rules file found - be clear, concrete and benefit-led)",
         "",
         "OUTPUT FORMAT (for each version):",
-        ct.format_for(platform),
+        ct.format_for(platform, resolve_format(ct, brief)),
         "",
         f"You will receive {n} version(s). Each has problems found by an automatic check. "
         "Fix ONLY the listed problems in each one and keep everything else as it is. "

@@ -8,7 +8,7 @@ from pathlib import Path
 import requests
 
 FEEDBACK_COLUMNS = [
-    "time", "copy_type", "platform", "product", "audience", "qualities", "offer",
+    "time", "copy_type", "format", "platform", "product", "audience", "qualities", "offer",
     "language", "length", "tone", "version_note", "script", "rating", "whats_weak",
     "expert_rewrite",
 ]
@@ -40,7 +40,7 @@ def notify_developer(row: dict, webhook_url: str) -> bool:
         return False
     text = (
         f"📝 New review: {row.get('rating')}/5 · {row.get('copy_type')}\n"
-        f"{row.get('product')} | {row.get('platform')} | {row.get('language')} | "
+        f"{row.get('product')} | {row.get('format') or '-'} | {row.get('platform')} | {row.get('language')} | "
         f"{row.get('length')} | {row.get('tone')}{(' | ' + row['version_note']) if row.get('version_note') else ''}\n\n"
         f"COPY:\n{row.get('script')}\n\n"
         f"WEAK: {row.get('whats_weak') or '-'}\n\n"
