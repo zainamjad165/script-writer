@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import hmac
 import os
+import uuid
 from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
 
-from feedback import feedback_csv_bytes, notify_developer, save_feedback
+from feedback import (feedback_csv_bytes, followup_messages, generation_messages,
+                      notify_developer, post_discord_async, save_feedback)
 from autofix import auto_fix_many
 from checks import is_shot_list, run_checks, spoken_text
 from llm import DEFAULT_FALLBACK_MODELS, DEFAULT_MODEL, LLMError, generate
@@ -18,6 +20,22 @@ from prompt import (
 )
 
 BASE_DIR = Path(__file__).parent
+
+# Every hint in the form describes the SAME example product, so users can see how one real
+# brief fits together. Change them all together if you change the example.
+PH = {
+    "product": "e.g. Cotton summer kurta for men",
+    "audience": "e.g. Young men, 18-30, in Pakistan",
+    "qualities": "Soft breathable cotton\nStays the same size after washing\nSizes S to XXL",
+    "offer": "e.g. Free delivery this week",
+    "pain_points": "Shirts stick to your back in the heat\nCheap kurtas shrink after one wash",
+    "cta": "e.g. Tap the link in bio and order yours today",
+    "shots": "e.g. walking through a market, close-up of the fabric, folding the kurta",
+    "keywords": "e.g. cotton kurta for men, summer kurta",
+    "avoid": "e.g. cheap, best in Pakistan",
+    "extra": "e.g. Available in white, navy and sand. Machine washable.",
+    "refine": "e.g. mention free delivery in the last line",
+}
 FEEDBACK_FILE = BASE_DIR / "feedback" / "feedback.csv"
 
 
@@ -64,6 +82,9 @@ def password_gate() -> None:
 
 password_gate()
 
+sid = st.session_state.setdefault("sid", uuid.uuid4().hex[:6])   # ties one visit's messages together
+WEBHOOK = get_setting("DISCORD_WEBHOOK_URL")
+
 st.title("✍️ Copywriter AI")
 st.caption("Pick what you need, fill the short form, get ready-to-use copy.")
 
@@ -81,7 +102,9 @@ with st.sidebar:
              "Emojis and hashtags are removed for free, without any request.")
     usage_box = st.empty()
     st.info("Free AI limits are small. If you hit a limit, wait a bit and retry. "
-            "Don't enter confidential client details.")
+            "Don't enter confidential client details."
+            + (" What you enter and what the AI writes is sent to the developer to help improve "
+               "this tool." if WEBHOOK else ""))
 
 FALLBACKS = [m.strip() for m in get_setting(
     "GEMINI_FALLBACK_MODELS", ",".join(DEFAULT_FALLBACK_MODELS)).split(",") if m.strip()]
@@ -99,6 +122,27 @@ def fix_fn(system: str, user: str) -> str:
     return ai(system, user, min(creativity, 0.6))
 
 
+def log_generation(brief: Brief, versions: list) -> None:
+    """Send the full brief and every version to Discord."""
+    if not WEBHOOK:
+        return
+    shown = [{"text": v["text"], "note": v["note"],
+              "problems": run_checks(v["text"], brief, v.get("relax", ""))} for v in versions]
+    settings = (f"Settings: {n_versions} version(s), creativity {creativity}, auto-fix "
+                f"{autofix_tries or 'off'}, model {model}")
+    post_discord_async(WEBHOOK, generation_messages(
+        sid, brief, shown, settings, st.session_state.get("ai_requests", 0)))
+
+
+def log_followup(brief: Brief, item: dict) -> None:
+    """Send a refined or fixed version to Discord."""
+    if not WEBHOOK:
+        return
+    entry = dict(item, problems=run_checks(item["text"], brief, item.get("relax", "")))
+    post_discord_async(WEBHOOK, followup_messages(
+        sid, brief, entry, st.session_state.get("ai_requests", 0)))
+
+
 def fix_note(fix) -> str:
     if fix.fixed:
         return "Auto-fixed"
@@ -112,17 +156,17 @@ ct = get_copy_type(type_by_label[chosen])
 
 with st.form("brief"):
     product = st.text_input("What are you selling?*", key="product",
-                            placeholder="e.g. Cotton summer kurta for men")
+                            placeholder=PH["product"])
     audience = st.text_input("Who is it for?*", key="audience",
-                             placeholder="e.g. Young men, 18-30, Pakistan")
+                             placeholder=PH["audience"])
     qualities = st.text_area("Key qualities* (one per line, 2-4 works best; ALL are used)", key="qualities",
-                             placeholder="Soft breathable cotton\nDoes not shrink\nSizes S to XXL")
+                             placeholder=PH["qualities"])
     offer = st.text_input("Offer or discount (optional)", key="offer",
-                          placeholder="e.g. Free delivery this week")
+                          placeholder=PH["offer"])
     pain_points = st.text_area("Problems it solves (optional, one per line)", key="pain_points",
-                               placeholder="Water turns warm mid-workout\nCheap bottles leak in the bag")
+                               placeholder=PH["pain_points"])
     cta = (st.text_input("Exact call to action (optional)", key="cta",
-                         placeholder="e.g. Tap the link in bio to get 15% off")
+                         placeholder=PH["cta"])
            if ct.supports_cta else "")
     c1, c2 = st.columns(2)
     language = c1.selectbox("Language", list(LANGUAGES), key="language")
@@ -139,17 +183,18 @@ with st.form("brief"):
                                        "and on-screen text for each segment.")
         shots = st.text_area("Shots you can film (optional, used for shot-by-shot)",
                              key=f"{ct.key}_shots",
-                             placeholder="gym floor, pouring ice water, dropping the bottle")
+                             placeholder=PH["shots"])
     toggle_values = {}
     if ct.toggles:
         for col, (tkey, toggle) in zip(st.columns(len(ct.toggles)), ct.toggles.items()):
             toggle_values[tkey] = col.checkbox(toggle.label, value=toggle.default,
                                                key=f"{ct.key}_{tkey}")
-    keywords = (st.text_input(ct.keywords_label, key=f"{ct.key}_keywords")
+    keywords = (st.text_input(ct.keywords_label, key=f"{ct.key}_keywords", placeholder=PH["keywords"])
                 if ct.keywords_label else "")
     with st.expander("More options"):
-        avoid = st.text_input("Words or claims to avoid", key="avoid")
-        extra = st.text_area("Extra details or specs (used only if there is space)", key="extra")
+        avoid = st.text_input("Words or claims to avoid", key="avoid", placeholder=PH["avoid"])
+        extra = st.text_area("Extra details or specs (used only if there is space)", key="extra",
+                         placeholder=PH["extra"])
     submitted = st.form_submit_button(f"Write my {ct.noun}", type="primary",
                                       use_container_width=True)
 
@@ -181,6 +226,7 @@ if submitted:
                 for d, f in zip(drafts, fixes)
             ]
             st.session_state["result"] = {"brief": brief, "versions": versions}
+            log_generation(brief, versions)
         except LLMError as e:
             st.session_state.pop("result", None)
             st.error(str(e))
@@ -215,6 +261,7 @@ if result:
                     tail = "" if fix.fixed else " (some issues remain)"
                     result["versions"].append(
                         {"text": fix.text, "note": f"Fixed from version {n}{tail}", "relax": relax})
+                    log_followup(brief, result["versions"][-1])
                     st.rerun()
         else:
             st.caption("✅ Passed all automatic checks")
@@ -226,7 +273,7 @@ if result:
                 new_tone = st.selectbox("New tone", TONES, key=f"rt_{idx}")
             if action == "Custom change":
                 custom = st.text_input("Describe the change", key=f"rc_{idx}",
-                                       placeholder="e.g. mention the warranty in the last line")
+                                       placeholder=PH["refine"])
             if st.button("Refine", key=f"refine_{idx}"):
                 instruction = refine_instruction(action, new_tone, custom)
                 if not instruction:
@@ -253,6 +300,7 @@ if result:
                                     note += f", auto-fix tried {fix.attempts}x"
                             result["versions"].append(
                                 {"text": new_text, "note": note, "relax": new_relax})
+                            log_followup(brief, result["versions"][-1])
                             st.rerun()
                         else:
                             st.error("The AI returned nothing. Try again.")

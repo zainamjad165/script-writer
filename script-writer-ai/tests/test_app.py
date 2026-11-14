@@ -308,3 +308,114 @@ def test_shot_by_shot_request_reaches_the_ai_and_shows_spoken_words(monkeypatch)
     assert "Tap the link in bio" in user
     assert any("spoken words" in m.value for m in at.markdown)
     assert [c.value for c in at.code] == [SHOT_LIST]
+
+
+# ---------------------------------------------------------------------------
+# One example product in every hint
+# ---------------------------------------------------------------------------
+FOREIGN_PRODUCT_WORDS = ["bottle", "gym", "water", "earbuds", "headset", "candle", "laptop", "achar", "fan "]
+
+
+def hints(at):
+    return [w.placeholder for w in list(at.text_input) + list(at.text_area) if w.placeholder]
+
+
+def test_every_hint_in_every_copy_type_describes_the_same_example_product():
+    for label in ("Video script", "Social media caption", "Ad copy", "Product description"):
+        at = fresh()
+        at.selectbox(key="copy_type_label").select(label).run(timeout=30)
+        found = hints(at)
+        assert len(found) >= 7, (label, found)
+        for hint in found:
+            assert not any(word in hint.lower() for word in FOREIGN_PRODUCT_WORDS), (label, hint)
+        assert any("kurta" in h.lower() for h in found), label
+
+
+def test_script_form_hints_cover_every_script_only_box_too():
+    at = fresh()
+    keyed = {w.key: w.placeholder for w in list(at.text_input) + list(at.text_area)}
+    for key in ("product", "audience", "qualities", "offer", "pain_points", "cta", "script_shots", "avoid", "extra"):
+        assert keyed.get(key), key
+
+
+# ---------------------------------------------------------------------------
+# Everything the tool does is sent to Discord
+# ---------------------------------------------------------------------------
+def with_webhook(monkeypatch, url="https://hook.example/abc"):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    # An empty value (not a deleted variable) so the app's .env loader cannot fill it in again.
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", url)
+    sent = []
+    monkeypatch.setattr("feedback.post_discord_async", lambda u, msgs: sent.append((u, list(msgs))))
+    return sent
+
+
+def generate_with_everything_filled(outputs, tries=None):
+    with patch("llm.generate", side_effect=list(outputs)):
+        at = fresh()
+        if tries is not None:
+            at.radio(key="autofix_tries").set_value(tries)
+        at.text_input(key="product").set_value("Cotton kurta")
+        at.text_input(key="audience").set_value("Young men in Pakistan")
+        at.text_area(key="qualities").set_value("Keeps cold for 24 hours\nLeak-proof")
+        at.text_input(key="offer").set_value("Free delivery")
+        at.text_area(key="pain_points").set_value("Sticky shirts in summer\nShrinking after one wash")
+        at.text_input(key="cta").set_value("Tap the link in bio")
+        at.text_area(key="script_shots").set_value("market walk, fabric close-up")
+        at.text_input(key="avoid").set_value("cheap")
+        at.text_area(key="extra").set_value("Available in navy")
+        at.selectbox(key="script_length").select("15 seconds")
+        at.button[0].click().run(timeout=30)
+    assert not at.exception
+    return at
+
+
+def test_each_generation_sends_the_full_brief_and_every_version(monkeypatch):
+    sent = with_webhook(monkeypatch)
+    generate_with_everything_filled([GOOD_SCRIPT + SEP + GOOD_SCRIPT.replace("Why settle", "Why wait")])
+    assert len(sent) == 1 and sent[0][0] == "https://hook.example/abc"
+    text = "\n".join(sent[0][1])
+    for needle in ("Cotton kurta", "Young men in Pakistan", "Keeps cold for 24 hours", "Leak-proof", "Free delivery",
+                   "Sticky shirts in summer", "Shrinking after one wash", "Tap the link in bio",
+                   "market walk, fabric close-up", "cheap", "Available in navy", "15 seconds",
+                   "Language: English", "Settings:", "Version 1", "Version 2", GOOD_SCRIPT[:40]):
+        assert needle in text, needle
+    assert "AI request #" in text
+
+
+def test_no_webhook_means_nothing_is_sent_and_no_notice_is_shown(monkeypatch):
+    sent = with_webhook(monkeypatch, url="")
+    at = generate_with_everything_filled([GOOD_SCRIPT])
+    assert sent == []
+    assert not any("sent to the developer" in i.value for i in at.sidebar.info)
+
+
+def test_the_user_is_told_their_input_is_sent_when_logging_is_on(monkeypatch):
+    with_webhook(monkeypatch)
+    at = fresh()
+    assert any("sent to the developer" in i.value for i in at.sidebar.info)
+
+
+def test_refine_and_fix_are_logged_too(monkeypatch):
+    sent = with_webhook(monkeypatch)
+    at = generate_with_everything_filled([BAD_SCRIPT], tries=0)
+    assert len(sent) == 1
+    with patch("llm.generate", return_value=GOOD_SCRIPT):
+        at.selectbox(key="ra_0").select("Make it shorter")
+        at.button(key="refine_0").click().run(timeout=30)
+    assert len(sent) == 2 and "Refined from version 1 (Make it shorter)" in "\n".join(sent[1][1])
+    with patch("llm.generate", return_value=GOOD_SCRIPT):
+        at.button(key="fix_0").click().run(timeout=30)
+    assert len(sent) == 3 and "Fixed from version 1" in "\n".join(sent[2][1])
+
+
+def test_failed_generations_are_not_logged(monkeypatch):
+    from llm import LLMError
+    sent = with_webhook(monkeypatch)
+    with patch("llm.generate", side_effect=LLMError("Free limit reached for now")):
+        at = fresh()
+        at.text_input(key="product").set_value("Cotton kurta")
+        at.text_input(key="audience").set_value("Young men")
+        at.text_area(key="qualities").set_value("Soft cotton")
+        at.button[0].click().run(timeout=30)
+    assert sent == [] and any("Free limit reached" in e.value for e in at.error)
