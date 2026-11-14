@@ -72,10 +72,11 @@ def _clean(text: str) -> str:
     return (text or "").replace("```", "'''").replace("@", "@\u200b")
 
 
-def chunk_text(text: str, limit: int) -> list:
+def _chunk_lines(text: str, limit: int) -> list:
+    """Split on line breaks (and, for one huge line, mid-line) so every piece fits the limit."""
     chunks, current = [], ""
     for line in text.split("\n"):
-        while len(line) > limit:                      # a single very long line
+        while len(line) > limit:
             if current:
                 chunks.append(current)
                 current = ""
@@ -92,6 +93,27 @@ def chunk_text(text: str, limit: int) -> list:
     return chunks
 
 
+def chunk_text(text: str, limit: int) -> list:
+    """Split at blank lines first, so a shot-list segment is never cut in half."""
+    chunks, current = [], ""
+    for paragraph in text.split("\n\n"):
+        if len(paragraph) > limit:                  # one paragraph too big: fall back to lines
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.extend(_chunk_lines(paragraph, limit))
+            continue
+        candidate = f"{current}\n\n{paragraph}" if current else paragraph
+        if len(candidate) > limit:
+            chunks.append(current)
+            current = paragraph
+        else:
+            current = candidate
+    if current or not chunks:
+        chunks.append(current)
+    return chunks
+
+
 def block_messages(header: str, body: str, footer: str = "", limit: int = DISCORD_LIMIT) -> list:
     """Split a long text into Discord-sized messages, each with its own code block."""
     header, body, footer = _clean(header), _clean(body), _clean(footer)[:700]
@@ -99,7 +121,7 @@ def block_messages(header: str, body: str, footer: str = "", limit: int = DISCOR
     parts = chunk_text(body.strip() or "-", room)
     messages = []
     for i, part in enumerate(parts):
-        top = header if i == 0 else f"(part {i + 1} of {len(parts)})"
+        top = header if i == 0 else f"(part {i + 1} of {len(parts)}) {header.splitlines()[0][:70]}"
         bottom = f"\n{footer}" if footer and i == len(parts) - 1 else ""
         messages.append(f"{top}\n```\n{part}\n```{bottom}")
     return messages

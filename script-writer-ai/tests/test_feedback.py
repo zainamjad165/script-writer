@@ -210,3 +210,37 @@ def test_post_discord_async_runs_in_the_background(monkeypatch):
     thread = post_discord_async("https://hook", ["a", "b"])
     thread.join(timeout=5)
     assert [m["content"] for m in sent] == ["a", "b"]
+
+
+def a_shot_list(segments=7):
+    return "\n\n".join(
+        f"{i * 9}-{(i + 1) * 9}s\nVISUAL: " + "scene " * 20 + "\nVOICEOVER: " + "words " * 20 + "\nON-SCREEN TEXT: TEXT"
+        for i in range(segments))
+
+
+def test_a_long_shot_list_is_only_ever_split_between_segments():
+    import re
+    text = a_shot_list(9)
+    chunks = chunk_text(text, 900)
+    assert len(chunks) > 1 and all(len(c) <= 900 for c in chunks)
+    assert "\n\n".join(chunks) == text
+    assert all(re.match(r"\d+-\d+s\n", c) for c in chunks)       # each chunk starts at a segment
+
+
+def test_split_log_messages_start_with_a_timestamp_and_name_what_they_continue():
+    import re
+    msgs = generation_messages("a1b2c3", a_brief(), [{"text": a_shot_list(9), "note": "", "problems": []}])
+    version_msgs = [m for m in msgs if "Version 1" in m.split("\n")[0] or m.startswith("(part")]
+    continued = [m for m in version_msgs if m.startswith("(part")]
+    assert continued and all("a1b2c3" in m.split("\n")[0] and "Version 1" in m.split("\n")[0] for m in continued)
+    for m in version_msgs:
+        first_line_of_code = m.split("```\n")[1].split("\n")[0]
+        assert re.match(r"\d+-\d+s$", first_line_of_code), first_line_of_code
+    assert all(len(m) <= 2000 for m in msgs)
+
+
+def test_chunking_still_handles_text_without_blank_lines_or_with_one_huge_paragraph():
+    lines = "\n".join(f"line {i} " + "x" * 50 for i in range(100))
+    chunks = chunk_text(lines, 500)
+    assert all(len(c) <= 500 for c in chunks) and "\n".join(chunks) == lines
+    assert [len(c) for c in chunk_text("y" * 1200, 500)] == [500, 500, 200]

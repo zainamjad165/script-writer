@@ -92,7 +92,10 @@ with st.sidebar:
     st.header("Settings")
     model = st.text_input("AI model", value=get_setting("GEMINI_MODEL", DEFAULT_MODEL),
                           help="If you see a 'model not found' error, try gemini-flash-latest")
-    creativity = st.slider("Creativity", 0.2, 1.2, 0.9, 0.1)
+    creativity = st.slider(
+        "Creativity", 0.2, 1.2, 0.9, 0.1,
+        help="Above about 1.0 the AI breaks the rules more often (wrong timestamps, "
+             "invented details). Around 0.7 to 0.9 works best.")
     n_versions = st.radio("Versions per request", [1, 2, 3], index=2, horizontal=True)
     autofix_tries = st.radio(
         "Auto-fix problems", [0, 1, 2], index=1, horizontal=True, key="autofix_tries",

@@ -242,3 +242,29 @@ def test_rules_carry_the_professional_feedback():
     general = load_rules("script")
     assert "No cliché openings" in general and "Never read a price out loud" in general
     assert "Shot-by-shot" in general and "ON-SCREEN TEXT" in general
+
+
+def test_shot_lists_keep_their_full_length_when_refined_or_fixed():
+    shot = make_brief(format="Shot-by-shot (timestamps)", length="60 seconds")
+    refine_system, _ = build_refine_prompt(shot, "0-3s\nVISUAL: x", "Make it shorter", rules="r")
+    fix_system, _ = build_batch_fix_prompt(shot, [("0-3s\nVISUAL: x", ["Problem."])], rules="r")
+    for system in (refine_system, fix_system):
+        assert "0s to the full 60 seconds" in system and "never the length of the reel" in system
+        assert "filler segments" in system
+    voice_system, _ = build_refine_prompt(make_brief(), "Text?", "Make it shorter", rules="r")
+    assert "length of the reel" not in voice_system
+
+
+def test_each_tone_gets_a_guide_so_funny_is_actually_funny():
+    from prompt import TONES, TONE_GUIDE
+    funny = build_prompt(make_brief(tone="Funny"), rules="r", examples=[])[1]
+    assert "genuinely funny" in funny
+    friendly = build_prompt(make_brief(tone="Friendly"), rules="r", examples=[])[1]
+    assert "Tone: Friendly\n" in friendly
+    assert set(TONE_GUIDE) <= set(TONES)
+
+
+def test_fix_guidance_protects_facts_and_numbers_written_in_words():
+    from prompt import fix_instruction
+    text = fix_instruction(["It uses numbers that aren't in your brief (15)."])
+    assert "written in words" in text and "vague words" in text and "never pad" in text

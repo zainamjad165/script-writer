@@ -30,6 +30,17 @@ TONES = ["Friendly", "High-energy / punchy", "Professional", "Funny", "Luxury / 
          "Urgent / exciting", "Emotional"]
 
 
+# How each tone should feel. A bare "Funny" produced jokes that were barely funny.
+TONE_GUIDE = {
+    "Funny": ("Make at least one line genuinely funny. The humour comes from the relatable problem "
+              "or an exaggerated reaction, never from random jokes that ignore the product."),
+    "High-energy / punchy": "Short sentences, active verbs, fast rhythm, no filler words.",
+    "Emotional": "Speak to a real feeling or memory the customer has, in plain words. No melodrama.",
+    "Luxury / premium": "Calm, confident, understated. Fewer words, no exclamation marks, no hype.",
+    "Urgent / exciting": ("Create urgency only from the offer or stock the buyer gave. "
+                          "Never invent deadlines."),
+}
+
 VO_ONLY = "Voiceover only"
 SHOT_BY_SHOT = "Shot-by-shot (timestamps)"
 
@@ -335,6 +346,14 @@ def _format_example(ex: dict) -> str:
     )
 
 
+def _timeline_note(brief: Brief, ct: CopyType) -> str:
+    if resolve_format(ct, brief) != SHOT_BY_SHOT:
+        return ""
+    return (f"The timeline must still run from 0s to the full {brief.length} of the reel. Shortening "
+            "or lengthening changes the number of spoken words, never the length of the reel. "
+            "Do not add filler segments.")
+
+
 def _brief_lines(brief: Brief, ct: CopyType, platform: str, length_text: str) -> list:
     lines = [
         f"Copy type: {ct.label}",
@@ -347,7 +366,7 @@ def _brief_lines(brief: Brief, ct: CopyType, platform: str, length_text: str) ->
         f"Offer: {brief.offer.strip() or 'none given - do not invent one; end with a call to action only'}",
         f"Language: {brief.language}. {LANGUAGES.get(brief.language, '')}",
         f"Length: {length_text}",
-        f"Tone: {brief.tone}",
+        f"Tone: {brief.tone}" + (f". {TONE_GUIDE[brief.tone]}" if brief.tone in TONE_GUIDE else ""),
         f"Platform: {platform}",
     ]
     fmt = resolve_format(ct, brief)
@@ -510,7 +529,7 @@ def build_refine_prompt(brief: Brief, original: str, instruction: str,
         "Apply ONLY the requested change. Keep every fact, the offer and the call to action "
         "unless the change says otherwise. Never add facts, numbers or offers that are not in "
         "the brief or the original. Output exactly ONE revised version and nothing else: "
-        "no notes or explanations.",
+        "no notes or explanations. " + _timeline_note(brief, ct),
     ]
     user = [
         "ORIGINAL COPY:",
@@ -528,10 +547,14 @@ def build_refine_prompt(brief: Brief, original: str, instruction: str,
 
 
 _FIX_GUIDANCE = (
-    "If a number is not in the brief, remove it or replace it with a fact from the brief. "
+    "If a number is flagged as not in the brief, first check the brief: it may be the brief's own "
+    "number written in words (for example 'fifteen thousand' for 15,000), and then it stays. "
+    "Otherwise remove it or replace it with a fact from the brief. "
+    "Never replace a fact with vague words such as 'many', 'plenty' or 'powerful', and keep "
+    "colours, specs and the offer exactly as the brief states them. "
     "If the offer is missing, include it exactly as given. "
     "If a key quality is missing, work it in without dropping any other one. "
-    "Respect the length target and every character limit."
+    "Respect the length target and every character limit, and never pad with filler."
 )
 
 # Refine actions that deliberately move the length away from the target
@@ -569,7 +592,8 @@ def build_batch_fix_prompt(brief: Brief, items: list, keep: str = "",
         "Fix ONLY the listed problems in each one and keep everything else as it is. "
         f"{_FIX_GUIDANCE} Never add facts, numbers or offers that are not in the brief or the "
         f"original. Answer with exactly {n} revised version(s), in the same order, with the line "
-        f"{VERSION_SEPARATOR} between them. No numbering, notes or explanations.",
+        f"{VERSION_SEPARATOR} between them. No numbering, notes or explanations. "
+        + _timeline_note(brief, ct),
     ]
     if keep.strip():
         system.append(

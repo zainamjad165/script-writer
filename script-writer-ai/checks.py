@@ -23,6 +23,9 @@ _BELOW_100 = rf"(?:(?:{_TENS_RE})(?:[\s-](?:one|{_TWO_TO_NINETEEN}))?|(?:{_TWO_T
 _HUNDREDS = rf"(?:(?:one|{_TWO_TO_NINETEEN})\s+hundred(?:\s+(?:and\s+)?{_BELOW_100})?)"
 # A lone "one" is left alone on purpose: "no one", "one clear call to action"
 SPELLED_NUMBER_RE = re.compile(rf"\b(?:{_HUNDREDS}|{_BELOW_100})\b", re.IGNORECASE)
+MULTIPLIER_RE = re.compile(r"(\d+(?:\.\d+)?)\s+(thousand|lakh|lac|million|crore)\b", re.IGNORECASE)
+MULTIPLIERS = {"thousand": 1_000, "lakh": 100_000, "lac": 100_000, "million": 1_000_000,
+               "crore": 10_000_000}
 PERCENT_RE = re.compile(r"(\d)\s*(?:percent|per cent)\b", re.IGNORECASE)
 
 THOUSANDS_RE = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
@@ -83,8 +86,10 @@ def _spelled_to_int(phrase: str) -> int:
 
 
 def normalize_numbers(text: str) -> str:
-    """'twenty percent' -> '20%', 'thirty-two' -> '32', so numbers compare fairly."""
+    """'twenty percent' -> '20%', 'thirty-two' -> '32', 'fifteen thousand' -> '15000'."""
     text = SPELLED_NUMBER_RE.sub(lambda m: str(_spelled_to_int(m.group(0))), text)
+    text = MULTIPLIER_RE.sub(
+        lambda m: str(round(float(m.group(1)) * MULTIPLIERS[m.group(2).lower()])), text)
     return PERCENT_RE.sub(r"\1%", text)
 
 
@@ -170,8 +175,9 @@ def _tokens(text: str) -> list:
 
 
 def copied_phrases(spoken: str, brief: Brief, n: int = 4) -> list:
-    """Runs of n words repeated straight from the buyer's spec lines (numbers don't count)."""
-    source = _tokens(" ".join([*brief.qualities_clean, brief.extra]))
+    """Runs of n words repeated straight from the buyer's quality lines (numbers don't count).
+    Plain facts in the extra details, such as colours, may be repeated."""
+    source = _tokens(" ".join(brief.qualities_clean))
     heard = _tokens(spoken)
     source_grams = {tuple(source[i:i + n]) for i in range(len(source) - n + 1)}
     found = []
@@ -329,7 +335,8 @@ def run_checks(text: str, brief: Brief, relax: str = "") -> list:
             out.append("Bullet highlights were switched off but the text contains some.")
 
     # --- honesty: the brief is the only source of facts -------------------
-    unlabeled = TIMESTAMP_RE.sub("", LABEL_NUMBER_RE.sub("", normalized))  # labels, not facts
+    # Labels ("HEADLINE 1:", "0-3s") are not facts, and neither are camera directions.
+    unlabeled = LABEL_NUMBER_RE.sub("", _numeric(copy_text(text, brief)))
     extra_numbers = sorted(set(NUMBER_RE.findall(unlabeled)) - set(NUMBER_RE.findall(given)),
                            key=lambda x: float(x.replace(",", ".")))
     if extra_numbers:

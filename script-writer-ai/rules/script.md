@@ -21,6 +21,8 @@ Style:
 - One idea per segment. Show the product solving the problem on camera instead of describing it.
 - The last segment is the call to action. Use the buyer's exact call to action when given.
 - Prices, discounts and spec labels go on screen, not in the voiceover.
+- Never pad. If there is little to say, use a longer visual beat (a demo that takes time)
+  instead of a filler line. Keep colours, specs and the offer exactly as the buyer gave them.
 
 ## Notes from the experts
 - (to be added after review)

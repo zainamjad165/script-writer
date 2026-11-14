@@ -382,3 +382,73 @@ def test_the_two_real_test_outputs_are_now_caught():
                   "mojood hain. " + "word " * 100)
     problems = run_checks(achar_text, brief(**ACHAR))
     assert has(problems, "'sehatmand'") and has(problems, "'dadi'") and has(problems, "em dash")
+
+
+# ---------------------------------------------------------------------------
+# Findings from the 60-second car vacuum test (false alarms that wasted AI requests)
+# ---------------------------------------------------------------------------
+VAC = dict(
+    product="Cordless handheld car vacuum", audience="Car owners and parents",
+    qualities=["15,000 Pa suction", "45-minute battery", "Comes with 3 attachments"],
+    offer="Free delivery this week", cta="Tap the link to order yours today",
+    extra="Price: $59. Available in black and grey.", length="60 seconds", copy_type="script",
+    format="Shot-by-shot (timestamps)", platform="General video",
+)
+
+VAC_V1 = """0-6s
+VISUAL: Someone walking out to the car with a corded household vacuum.
+VOICEOVER: Still dragging a cord all the way from your kitchen just to clean the front seat?
+ON-SCREEN TEXT: Cords don't reach
+
+6-16s
+VISUAL: Close-up of deep car seat gaps packed with old snack crumbs, then the handheld vacuum swoops in.
+VOICEOVER: Leave the extension cord behind. Fifteen thousand pascals of suction pulls every crumb and piece of dust right out of those impossible seat gaps.
+ON-SCREEN TEXT: 15,000 Pa suction
+
+16-26s
+VISUAL: Someone snapping a narrow nozzle onto the vacuum.
+VOICEOVER: You get three attachments that actually reach the spots where kids hide half their snacks.
+ON-SCREEN TEXT: 3 attachments included
+
+26-40s
+VISUAL: A stopwatch ticking past thirty minutes while the vacuum keeps cleaning every corner of a large SUV.
+VOICEOVER: And the battery lasts for forty five solid minutes, which is plenty of time to finish the whole car without rushing.
+ON-SCREEN TEXT: 45-minute battery
+
+40-50s
+VISUAL: The vacuum sitting neatly on a kitchen counter next to the car keys.
+VOICEOVER: It looks great on your counter, and it is available in black and grey right now.
+ON-SCREEN TEXT: $59 - Black & Grey
+
+50-60s
+VISUAL: A happy car owner tossing a bag of crushed snacks into the trash, then pointing at the screen.
+VOICEOVER: Plus, you get free delivery this week. Tap the link to order yours today.
+ON-SCREEN TEXT: Free delivery this week. Tap to order."""
+
+
+def test_big_numbers_written_in_words_match_the_brief():
+    assert normalize_numbers("fifteen thousand pascals") == "15000 pascals"
+    assert normalize_numbers("two hundred thousand") == "200000"
+    assert normalize_numbers("5 lakh rupees") == "500000 rupees"
+    assert normalize_numbers("2.5 million") == "2500000"
+    assert normalize_numbers("forty five minutes") == "45 minutes"
+
+
+def test_the_vacuum_test_only_reports_its_two_real_problems():
+    problems = run_checks(VAC_V1, brief(**VAC))
+    assert len(problems) == 2, problems
+    assert has(problems, "hook segment runs 6s") and has(problems, "target is 140-170")
+    assert not has(problems, "numbers") and not has(problems, "spec lines")
+
+
+def test_numbers_in_camera_directions_are_not_claims_but_spoken_ones_still_are():
+    visual_only = VAC_V1.replace("ticking past thirty minutes", "ticking past 99 minutes")
+    assert not has(run_checks(visual_only, brief(**VAC)), "numbers")
+    spoken = VAC_V1.replace("forty five solid minutes", "ninety nine solid minutes")
+    assert has(run_checks(spoken, brief(**VAC)), "99")
+
+
+def test_colours_in_the_extra_details_may_be_repeated_but_quality_lines_may_not():
+    b = brief(qualities=["Zero-leak locking lid"], extra="Available in black and grey")
+    assert copied_phrases("It is available in black and grey.", b) == []
+    assert copied_phrases("The zero leak locking lid is secure.", b) == ["zero leak locking lid"]
