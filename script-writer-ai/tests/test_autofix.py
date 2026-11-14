@@ -147,3 +147,10 @@ def test_keep_instruction_is_passed_to_the_ai():
     bad_short = SHORT.replace("8 hours", "99 hours")
     auto_fix(BRIEF, bad_short, gen, max_attempts=1, relax="shorter", keep="Make it shorter")
     assert "Do not undo that change" in gen.calls[0][0] and "Make it shorter" in gen.calls[0][0]
+
+
+def test_quick_fix_replaces_em_dashes_for_free():
+    assert quick_fix("Cold\u2014all day. Stay cool \u2014 always.", BRIEF) == "Cold, all day. Stay cool, always."
+    gen = Gen()
+    res = auto_fix(BRIEF, GOOD.replace("so your", "\u2014 so your"), gen, max_attempts=2)
+    assert res.fixed and res.attempts == 0 and not gen.calls and "\u2014" not in res.text

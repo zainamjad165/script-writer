@@ -4,7 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from checks import (copied_phrases, missing_qualities, normalize_numbers, run_checks,
-                    shot_list_problems, spoken_text)
+                    shot_list_problems, spoken_text, unsupported_claims)
 from prompt import Brief, load_examples
 
 
@@ -315,3 +315,70 @@ def test_shot_list_structure_problems():
 def test_a_cliche_hook_is_caught_in_the_first_voiceover_line_of_a_shot_list():
     cliche = VALID_SHOT_LIST.replace("If your bottle can't survive this, bin it.", "Tired of warm water? Bin it.")
     assert has(run_checks(cliche, brief(**SHOT)), "cliché")
+
+
+# ---------------------------------------------------------------------------
+# Unsupported claims and AI tells (found while testing a headset and an achar brief)
+# ---------------------------------------------------------------------------
+HEADSET = dict(
+    product="Wireless gaming headset", audience="Competitive gamers, 18-28",
+    qualities=["7.1 surround sound", "40-hour battery", "Detachable mic with noise filter"],
+    offer="20% off + free shipping this week", cta="Tap the link in bio before the offer ends",
+    copy_type="script", format="Shot-by-shot (timestamps)", length="30 seconds", platform="TikTok",
+)
+ACHAR = dict(
+    product="Ghar ka bana achar, glass jar mein", audience="Pakistani families",
+    qualities=["Chhote batches mein ghar par bana hua", "Koi artificial rang ya preservative nahi",
+               "Aam, lemon aur mixed flavours"],
+    offer="", language="Roman Urdu", length="60 seconds", copy_type="script",
+    format="Voiceover only", platform="General video",
+)
+
+
+def test_a_battery_spec_turned_into_a_week_is_flagged():
+    b = brief(**HEADSET)
+    text = ("0-3s\nVISUAL: Gamer slams the desk.\nVOICEOVER: Dead again?\nON-SCREEN TEXT: DEAD?\n\n"
+            "3-30s\nVISUAL: Timer on the desk.\nVOICEOVER: Go a full week of heavy gaming before you charge. "
+            "Tap the link in bio before the offer ends.\nON-SCREEN TEXT: 40-HOUR BATTERY")
+    assert unsupported_claims(text, b) == ["full week"]
+    assert has(run_checks(text, b), "claims your brief doesn't support")
+
+
+def test_this_week_and_launch_week_are_not_claims():
+    b = brief(**HEADSET)
+    assert unsupported_claims("Free shipping this week only. Launch week deal.", b) == []
+
+
+def test_a_time_span_is_fine_when_the_buyer_said_it():
+    b = brief(qualities=["Battery lasts a whole week"], offer="")
+    assert unsupported_claims("The battery lasts a whole week.", b) == []
+    assert unsupported_claims("Lifetime warranty included.", brief(qualities=["Lifetime warranty"])) == []
+
+
+def test_invented_origin_and_health_claims_are_flagged_in_roman_urdu_too():
+    b = brief(**ACHAR)
+    text = ("Dadi ke hath ke zaiqe ki talash hai? Khalis aur sehatmand khana. " + "word " * 120)
+    assert sorted(unsupported_claims(text, b)) == ["dadi", "sehatmand"]
+    assert unsupported_claims("Ghar ka bana achar, chhote batches mein.", b) == []
+
+
+def test_visuals_are_not_checked_for_claims():
+    b = brief(**HEADSET)
+    text = "0-3s\nVISUAL: Time-lapse over a whole week of gaming.\nVOICEOVER: Dead again?\nON-SCREEN TEXT: DEAD?"
+    assert unsupported_claims(text, b) == []
+
+
+def test_em_dash_is_flagged_but_timestamp_dashes_are_not():
+    assert has(run_checks("Why settle? Cold\u2014all day.", brief(offer="")), "em dash")
+    shot = "0\u20143s\nVISUAL: x\nVOICEOVER: Why settle?\nON-SCREEN TEXT: y"
+    assert not has(run_checks(shot, brief(**HEADSET)), "em dash")
+    assert not has(run_checks("Why settle? Cold, all day.", brief(offer="")), "em dash")
+
+
+def test_the_two_real_test_outputs_are_now_caught():
+    achar_text = ("Dadi ke hath ke us purane zaiqe ki talash hai?\n\nIs mein kisi bhi tarah ke chemical ya "
+                  "banawati rang ka istemal nahi hota, taake aap apni family ko khalis aur sehatmand khana "
+                  "khila saken. Ras bhare aam, raseele lemon aur mazedaar mixed\u2014teeno lazeez zaiqe "
+                  "mojood hain. " + "word " * 100)
+    problems = run_checks(achar_text, brief(**ACHAR))
+    assert has(problems, "'sehatmand'") and has(problems, "'dadi'") and has(problems, "em dash")

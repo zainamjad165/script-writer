@@ -46,6 +46,18 @@ PRICE_RE = re.compile(
 CLICHE_OPENERS = ("tired of", "sick of", "are you tired", "looking for", "say goodbye",
                   "introducing", "meet the", "imagine", "ever wondered", "did you know",
                   "are you ready")
+# Claims the buyer never made. A phrase is fine if the buyer's own words contain it.
+TIME_CLAIM_RE = re.compile(
+    r"\b(?:full|whole|entire)\s+(?:week|month|year)s?\b|\ball\s+(?:week|month|year)\b"
+    r"|\b(?:a|one|two|three|several)\s+(?:week|month|year)s?\b|\b(?:lifetime|forever)\b",
+    re.IGNORECASE)
+HEALTH_CLAIM_RE = re.compile(
+    r"\b(?:healthy|healthier|health|cures?|cured|heals?|immunity|detox|sehatmand|sehat|shifa)\b",
+    re.IGNORECASE)
+ORIGIN_CLAIM_RE = re.compile(
+    r"\b(?:grandmother|grandma|dadi|nani|family recipe|secret recipe|ancient)\b", re.IGNORECASE)
+EM_DASH = "\u2014"
+
 STOPWORDS = {"a", "an", "the", "and", "or", "of", "to", "in", "on", "for", "with", "is", "are",
              "it", "its", "you", "your", "that", "this", "at", "by", "as", "be", "can", "from"}
 # Things that sound like an offer. Flagged only when the buyer gave none.
@@ -169,6 +181,28 @@ def copied_phrases(spoken: str, brief: Brief, n: int = 4) -> list:
                 and not all(t in STOPWORDS for t in gram)):
             phrase = " ".join(gram)
             if not any(phrase in f or f in phrase for f in found):
+                found.append(phrase)
+    return found
+
+
+def copy_text(text: str, brief: Brief) -> str:
+    """The wording a customer reads or hears (shot-list visuals and timestamps removed)."""
+    if is_shot_list(brief):
+        text = "\n".join(l for l in text.splitlines() if not re.match(r"\s*VISUAL\s*:", l, re.I))
+    return TIMESTAMP_RE.sub("", text)
+
+
+def unsupported_claims(text: str, brief: Brief) -> list:
+    """Time spans, health benefits and origin stories the buyer did not state.
+
+    'Keeps cold for 24 hours' must not become 'cold for a full week'. A claim passes when the
+    same words appear in the buyer's own text (offer and call to action included)."""
+    given = _input_text(brief).lower()
+    found = []
+    for rx in (TIME_CLAIM_RE, HEALTH_CLAIM_RE, ORIGIN_CLAIM_RE):
+        for m in rx.finditer(copy_text(text, brief)):
+            phrase = m.group(0).lower()
+            if phrase not in given and phrase not in found:
                 found.append(phrase)
     return found
 
@@ -332,6 +366,13 @@ def run_checks(text: str, brief: Brief, relax: str = "") -> list:
             quoted = "; ".join(f"'{c}'" for c in copied[:2])
             out.append(f"It repeats phrases straight from your spec lines ({quoted}). "
                        "Say what the customer sees or feels instead.")
+
+    claims = unsupported_claims(text, brief)
+    if claims:
+        out.append("It adds claims your brief doesn't support (" + ", ".join(f"'{c}'" for c in claims[:3])
+                   + "). Remove them or check they are true.")
+    if EM_DASH in TIMESTAMP_RE.sub("", text):
+        out.append("It contains an em dash (\u2014), a common sign of AI writing. Use a comma or a full stop.")
 
     avoid_terms = [t.strip().lower() for t in re.split(r"[,;\n]", brief.avoid) if t.strip()]
     hits = [t for t in avoid_terms if t in lowered]

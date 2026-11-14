@@ -15,6 +15,7 @@ from llm import LLMError
 from prompt import Brief, build_batch_fix_prompt, get_copy_type, parse_versions
 
 HASHTAG_RE = re.compile(r"(?<!\w)#\w+")
+EM_DASH_RE = re.compile(r"[ \t]*\u2014[ \t]*")
 
 
 @dataclass
@@ -38,9 +39,9 @@ def _tidy(text: str) -> str:
 
 
 def quick_fix(text: str, brief: Brief) -> str:
-    """Fixes that need no AI: remove emojis / hashtags where they are not wanted."""
+    """Fixes that need no AI: em dashes, and emojis / hashtags where they are not wanted."""
     ct = get_copy_type(brief.copy_type)
-    fixed = text
+    fixed = EM_DASH_RE.sub(", ", text)
     if ct.key == "script" or (
         ct.key == "caption" and not brief.toggles.get("emojis", ct.toggles["emojis"].default)
     ):

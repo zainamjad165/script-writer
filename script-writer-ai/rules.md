@@ -11,6 +11,7 @@
   prices and discounts on screen when the format allows.
 - Lead with the benefit to the customer, not the feature.
 - Simple words, short sentences. Write the way people actually talk.
+- Do not use em dashes. Use a comma or a full stop.
 - No filler like "in today's fast-paced world" or "look no further".
 - Every version must include ALL the key qualities the buyer listed. Versions differ in hook,
   angle and wording, never in which key qualities they cover.
@@ -19,6 +20,9 @@
 
 ## Honesty
 - Never invent facts, numbers, discounts, prices, reviews or guarantees the buyer did not give.
+- Never add claims the buyer did not make: origin stories ("grandmother's recipe"), health
+  benefits, how it is made, or longer time spans ("40 hours" is not "a full week").
+  Vivid imagery is fine. Factual claims are not.
 - No fake urgency the buyer did not ask for.
 - No exaggerated, medical or "guaranteed result" claims.
 
