@@ -224,3 +224,8 @@ def post_discord_async(webhook_url: str, messages: list):
     thread = threading.Thread(target=post_discord, args=(webhook_url, messages), daemon=True)
     thread.start()
     return thread
+
+
+def note_messages(sid: str, text: str) -> list:
+    """A one-line event for the log, e.g. the user asked for another option."""
+    return [_clean(f"\U0001F440 **#{sid}** {text}")]

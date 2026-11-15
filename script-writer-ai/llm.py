@@ -16,9 +16,15 @@ DEFAULT_FALLBACK_MODELS = ("gemini-flash-latest",)
 class LLMError(Exception):
     """Raised with a message that is safe and friendly to show to the user."""
 
-    def __init__(self, message: str, rate_limited: bool = False):
+    def __init__(self, message: str, rate_limited: bool = False, model_missing: bool = False):
         super().__init__(message)
         self.rate_limited = rate_limited
+        self.model_missing = model_missing
+
+
+# Models Google said do not exist. They are skipped from then on (until the app restarts), so a
+# retired model name costs one failed request instead of one per click.
+_UNAVAILABLE: set = set()
 
 
 def _friendly_error(status: int, body: dict | None) -> str:
@@ -27,15 +33,14 @@ def _friendly_error(status: int, body: dict | None) -> str:
         msg = str(body.get("error", {}).get("message", ""))
     if status == 429:
         return ("Free limit reached for now (too many requests). Wait a minute and try again. "
-                "If it keeps happening, you've used today's free quota - try again tomorrow "
-                "or switch the model in the sidebar.")
+                "If it keeps happening, you've used today's free quota - try again tomorrow.")
     if status in (400, 401, 403):
         if "API key" in msg or status in (401, 403):
             return "The API key was rejected. Check that GEMINI_API_KEY is correct."
         return f"The request was rejected: {msg or 'bad request'}"
     if status == 404:
-        return ("That model name was not found (Google renames models often). "
-                "Change the model in the sidebar, e.g. gemini-flash-latest.")
+        return ("The AI model isn't available right now (Google renames and retires models "
+                "often). The developer needs to update the model name.")
     if status >= 500:
         return "Google's server is busy right now. Please try again in a moment."
     return f"Unexpected error ({status}): {msg}"
@@ -68,7 +73,7 @@ def _generate_one(system, user, api_key, model, temperature, timeout, http) -> s
             time.sleep(2)
             continue
         break
-    raise LLMError(last_error, rate_limited=(status == 429))
+    raise LLMError(last_error, rate_limited=(status == 429), model_missing=(status == 404))
 
 
 def generate(
@@ -84,16 +89,21 @@ def generate(
     if not api_key:
         raise LLMError("No API key found. Add GEMINI_API_KEY (see README).")
     http = session or requests
-    models = [model] + [m for m in fallback_models if m and m != model]
+    candidates = [model] + [m for m in fallback_models if m and m != model]
+    models = [m for m in candidates if m not in _UNAVAILABLE] or candidates
     last: LLMError | None = None
     for name in models:
         try:
             return _generate_one(system, user, api_key, name, temperature, timeout, http)
         except LLMError as e:
             last = e
-            if not e.rate_limited:   # only a free-limit error is worth trying another model for
-                raise
-    raise last  # every model was rate limited
+            if e.model_missing:      # renamed or retired: remember it and try the next model
+                _UNAVAILABLE.add(name)
+                continue
+            if e.rate_limited:       # free limit reached: the next model has its own allowance
+                continue
+            raise
+    raise last  # every model was missing or rate limited
 
 
 def _extract_text(body: dict | None) -> str:

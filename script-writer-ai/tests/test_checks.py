@@ -3,8 +3,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from checks import (copied_phrases, missing_qualities, normalize_numbers, run_checks,
-                    shot_list_problems, spoken_text, unsupported_claims)
+from checks import (copied_phrases, missing_qualities, normalize_numbers, rank_versions,
+                    run_checks, shot_list_problems, spoken_text, unsupported_claims)
 from prompt import Brief, load_examples
 
 
@@ -452,3 +452,41 @@ def test_colours_in_the_extra_details_may_be_repeated_but_quality_lines_may_not(
     b = brief(qualities=["Zero-leak locking lid"], extra="Available in black and grey")
     assert copied_phrases("It is available in black and grey.", b) == []
     assert copied_phrases("The zero leak locking lid is secure.", b) == ["zero leak locking lid"]
+
+
+# ---------------------------------------------------------------------------
+# Picking the best of three
+# ---------------------------------------------------------------------------
+RANK = dict(length="15 seconds", offer="Free delivery", qualities=["Keeps cold for 24 hours"])
+RANK_GOOD = ("Why settle for warm water? This bottle keeps drinks cold for 24 hours, so your lunch stays fresh "
+             "and your bag stays dry all day long. Get free delivery today. Tap the link and order now.")
+
+
+def test_the_version_with_the_fewest_problems_ranks_first():
+    bad = RANK_GOOD.replace("24 hours", "99 hours")                    # invented number + missing quality
+    worse = "No question here, buy now."                               # many problems
+    assert rank_versions([worse, bad, RANK_GOOD], brief(**RANK)) == [2, 1, 0]
+
+
+def test_ties_go_to_the_version_closest_to_the_middle_of_the_word_target():
+    shorter = ("Why settle for warm water? This bottle keeps drinks cold for 24 hours and never leaks in "
+               "your bag. Get free delivery today. Tap the link and order yours now.")
+    b = brief(**RANK)
+    assert run_checks(shorter, b) == [] and run_checks(RANK_GOOD, b) == []     # both pass: a true tie
+    assert rank_versions([shorter, RANK_GOOD], b) == [1, 0]                    # 36 words beat 30 (target 35-45)
+    assert rank_versions([RANK_GOOD, shorter], b) == [0, 1]
+
+
+def test_equal_versions_keep_the_ais_own_order_and_empty_input_is_fine():
+    assert rank_versions([RANK_GOOD, RANK_GOOD, RANK_GOOD], brief(**RANK)) == [0, 1, 2]
+    assert rank_versions([], brief(**RANK)) == []
+
+
+def test_ranking_respects_a_deliberate_shorter_version():
+    short = "Why settle for warm water? Cold for 24 hours, free delivery, order now."
+    no_offer = RANK_GOOD.replace("Get free delivery today. ", "")      # exactly one problem: offer missing
+    b = brief(**RANK)
+    assert len(run_checks(short, b)) == 1 and len(run_checks(no_offer, b)) == 1   # a tie on problems
+    assert rank_versions([short, no_offer], b) == [1, 0]                           # the longer one is nearer the target
+    assert run_checks(short, b, relax="shorter") == []
+    assert rank_versions([short, no_offer], b, relax="shorter") == [0, 1]          # a deliberate shorter version wins

@@ -35,6 +35,7 @@ def _tidy(text: str) -> str:
     lines = [line.rstrip() for line in text.splitlines()]
     text = "\n".join(lines)
     text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r"[ \t]+([,.;:!?])", r"\1", text)      # no gap left before punctuation
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 

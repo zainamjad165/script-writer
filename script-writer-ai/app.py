@@ -4,15 +4,16 @@ from __future__ import annotations
 import hmac
 import os
 import uuid
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
 
 from feedback import (feedback_csv_bytes, followup_messages, generation_messages,
-                      notify_developer, post_discord_async, save_feedback)
+                      note_messages, notify_developer, post_discord_async, save_feedback)
 from autofix import auto_fix_many
-from checks import is_shot_list, run_checks, spoken_text
+from checks import is_shot_list, rank_versions, run_checks, spoken_text
 from llm import DEFAULT_FALLBACK_MODELS, DEFAULT_MODEL, LLMError, generate
 from prompt import (
     COPY_TYPES, LANGUAGES, REFINE_ACTIONS, REFINE_RELAX, TONES, Brief, build_prompt, build_refine_prompt,
@@ -88,53 +89,42 @@ WEBHOOK = get_setting("DISCORD_WEBHOOK_URL")
 st.title("✍️ Copywriter AI")
 st.caption("Pick what you need, fill the short form, get ready-to-use copy.")
 
+# Fixed on purpose. These used to be settings; the people using the tool never needed them.
+CREATIVITY = 0.8
+VERSIONS = 3          # the AI always writes 3 versions; the app shows the best one
+MAX_TONES = 4         # each tone costs one AI request
+MODEL = get_setting("GEMINI_MODEL", DEFAULT_MODEL)   # developer-only, set as a secret
+FALLBACKS = [m.strip() for m in get_setting(
+    "GEMINI_FALLBACK_MODELS", ",".join(DEFAULT_FALLBACK_MODELS)).split(",") if m.strip()]
+
 with st.sidebar:
-    st.header("Settings")
-    model = st.text_input("AI model", value=get_setting("GEMINI_MODEL", DEFAULT_MODEL),
-                          help="If you see a 'model not found' error, try gemini-flash-latest")
-    creativity = st.slider(
-        "Creativity", 0.2, 1.2, 0.9, 0.1,
-        help="Above about 1.0 the AI breaks the rules more often (wrong timestamps, "
-             "invented details). Around 0.7 to 0.9 works best.")
-    n_versions = st.radio("Versions per request", [1, 2, 3], index=2, horizontal=True)
-    autofix_tries = st.radio(
-        "Auto-fix problems", [0, 1, 2], index=1, horizontal=True, key="autofix_tries",
-        format_func=lambda n: "Off" if n == 0 else f"{n} try" if n == 1 else f"{n} tries",
-        help="When a result fails a check, the AI revises it automatically. "
-             "Each try is ONE extra request that fixes all failing versions together. "
-             "Emojis and hashtags are removed for free, without any request.")
     usage_box = st.empty()
     st.info("Free AI limits are small. If you hit a limit, wait a bit and retry. "
             "Don't enter confidential client details."
             + (" What you enter and what the AI writes is sent to the developer to help improve "
                "this tool." if WEBHOOK else ""))
 
-FALLBACKS = [m.strip() for m in get_setting(
-    "GEMINI_FALLBACK_MODELS", ",".join(DEFAULT_FALLBACK_MODELS)).split(",") if m.strip()]
-
 
 def ai(system: str, user: str, temperature: float) -> str:
-    """Every AI request goes through here, so the sidebar can count them."""
+    """Every AI request goes through here, so the sidebar can count them.
+    If the model has been renamed or retired, llm.generate switches to the backup by itself."""
     st.session_state["ai_requests"] = st.session_state.get("ai_requests", 0) + 1
-    return generate(system, user, get_setting("GEMINI_API_KEY"), model=model,
+    return generate(system, user, get_setting("GEMINI_API_KEY"), model=MODEL,
                     temperature=temperature, fallback_models=FALLBACKS)
 
 
 def fix_fn(system: str, user: str) -> str:
     """Fixes should be careful, so use a lower creativity than the first draft."""
-    return ai(system, user, min(creativity, 0.6))
+    return ai(system, user, min(CREATIVITY, 0.6))
 
 
-def log_generation(brief: Brief, versions: list) -> None:
-    """Send the full brief and every version to Discord."""
+def log_generation(brief: Brief, entries: list) -> None:
+    """Send the full brief and ALL versions the AI wrote (shown and hidden) to Discord."""
     if not WEBHOOK:
         return
-    shown = [{"text": v["text"], "note": v["note"],
-              "problems": run_checks(v["text"], brief, v.get("relax", ""))} for v in versions]
-    settings = (f"Settings: {n_versions} version(s), creativity {creativity}, auto-fix "
-                f"{autofix_tries or 'off'}, model {model}")
+    settings = f"Settings: best of {VERSIONS}, creativity {CREATIVITY}, tone {brief.tone}, model {MODEL}"
     post_discord_async(WEBHOOK, generation_messages(
-        sid, brief, shown, settings, st.session_state.get("ai_requests", 0)))
+        sid, brief, entries, settings, st.session_state.get("ai_requests", 0)))
 
 
 def log_followup(brief: Brief, item: dict) -> None:
@@ -146,10 +136,9 @@ def log_followup(brief: Brief, item: dict) -> None:
         sid, brief, entry, st.session_state.get("ai_requests", 0)))
 
 
-def fix_note(fix) -> str:
-    if fix.fixed:
-        return "Auto-fixed"
-    return f"Auto-fix tried {fix.attempts}x, some issues remain" if fix.attempts else ""
+def log_note(text: str) -> None:
+    if WEBHOOK:
+        post_discord_async(WEBHOOK, note_messages(sid, text))
 
 
 # The type picker sits outside the form so the form below can change with it.
@@ -177,7 +166,9 @@ with st.form("brief"):
     length = c2.selectbox(ct.length_label, lengths, index=lengths.index(ct.default_length),
                           key=f"{ct.key}_length", format_func=lambda k: length_hint(ct, k))
     c3, c4 = st.columns(2)
-    tone = c3.selectbox("Tone", TONES, key="tone")
+    tones = c3.multiselect(
+        "Tone (pick one or more)", TONES, default=[TONES[0]], max_selections=MAX_TONES, key="tones",
+        help=f"Pick up to {MAX_TONES}. Each tone gets its own version and uses 1 AI request.")
     platform = c4.selectbox("Platform", ct.platforms, key=f"{ct.key}_platform")
     fmt_choice, shots = "", ""
     if ct.formats:
@@ -204,58 +195,77 @@ with st.form("brief"):
 if submitted:
     brief = Brief(
         product=product, audience=audience, qualities=qualities.splitlines(), offer=offer,
-        language=language, length=length, tone=tone, platform=platform, avoid=avoid,
-        extra=extra, versions=n_versions, copy_type=ct.key, toggles=toggle_values,
+        language=language, length=length, tone=tones[0] if tones else "", platform=platform,
+        avoid=avoid, extra=extra, versions=VERSIONS, copy_type=ct.key, toggles=toggle_values,
         keywords=keywords, format=fmt_choice, pain_points=pain_points.splitlines(),
         shots=shots, cta=cta,
     )
-    missing = brief.missing()
+    missing = brief.missing() + ([] if tones else ["tone"])
     if missing:
         st.warning("Please fill in: " + ", ".join(missing))
     else:
-        system, user = build_prompt(brief)
-        try:
-            with st.spinner("Writing..."):
-                text = ai(system, user, creativity)
-            drafts = parse_versions(text)
-            fixes = [None] * len(drafts)
-            if autofix_tries:
-                with st.spinner("Checking and fixing..."):
-                    fixes = auto_fix_many(brief, drafts, fix_fn, autofix_tries)
-                if fixes and fixes[0].error:
-                    st.warning(f"Auto-fix stopped early: {fixes[0].error}")
-            versions = [
-                {"text": f.text if f else d, "note": fix_note(f) if f else "", "relax": ""}
-                for d, f in zip(drafts, fixes)
-            ]
-            st.session_state["result"] = {"brief": brief, "versions": versions}
-            log_generation(brief, versions)
-        except LLMError as e:
+        items, failure = [], ""
+        for tone in tones:                       # one request per tone, best of 3 for each
+            tone_brief = replace(brief, tone=tone)
+            system, user = build_prompt(tone_brief)
+            try:
+                with st.spinner(f"Writing ({tone})..." if len(tones) > 1 else "Writing..."):
+                    text = ai(system, user, CREATIVITY)
+            except LLMError as e:
+                failure = f"{tone}: {e}" if len(tones) > 1 else str(e)
+                break                            # the next tone would most likely fail the same way
+            # Free fixes only (em dashes, unwanted emojis/hashtags). No AI request is used here.
+            drafts = [f.text for f in auto_fix_many(tone_brief, parse_versions(text), fix_fn, 0)]
+            if not drafts:
+                failure = "The AI returned nothing. Try again."
+                break
+            order = rank_versions(drafts, tone_brief)
+            best, hidden = order[0], order[1:]
+            label = f"{tone} · " if len(tones) > 1 else ""
+            items.append({
+                "text": drafts[best], "note": f"{label}Best of {len(drafts)}", "relax": "",
+                "brief": tone_brief, "alternates": [drafts[i] for i in hidden],
+            })
+            entries = []
+            for rank, i in enumerate(order):
+                shown = "Shown to the user (best of %d)" % len(drafts) if rank == 0 else f"Hidden option {rank}"
+                entries.append({"text": drafts[i], "note": shown,
+                                "problems": run_checks(drafts[i], tone_brief)})
+            log_generation(tone_brief, entries)
+        if items:
+            st.session_state["result"] = {"brief": brief, "versions": items}
+            if failure:
+                st.warning(f"Couldn't write every tone. {failure}")
+        else:
             st.session_state.pop("result", None)
-            st.error(str(e))
+            st.error(failure)
 
 result = st.session_state.get("result")
 if result:
     brief: Brief = result["brief"]
     result_type = get_copy_type(brief.copy_type)
-    st.subheader(f"Your {result_type.noun}s")
-    for idx, item in enumerate(list(result["versions"])):
+    items = result["versions"]
+    st.subheader(f"Your {result_type.noun}" + ("s" if len(items) > 1 else ""))
+    st.caption(f"The AI wrote {VERSIONS} versions and this is the one that passed the most automatic "
+               "checks. The checks can't judge taste, so use 'Show another option' to compare.")
+    for idx, item in enumerate(list(items)):
+        vbrief: Brief = item.get("brief", brief)       # each tone has its own brief
         n = idx + 1
         copy = item["text"]
         note = f"  ·  {item['note']}" if item["note"] else ""
-        spoken = spoken_text(copy, brief)
-        unit = "spoken words" if is_shot_list(brief) else "words"
+        spoken = spoken_text(copy, vbrief)
+        unit = "spoken words" if is_shot_list(vbrief) else "words"
         st.markdown(f"**Version {n}**{note}  ·  {word_count(spoken)} {unit} · {len(copy)} characters")
         st.code(copy, language=None, wrap_lines=True)  # copy button built in
 
         relax = item.get("relax", "")
-        problems = run_checks(copy, brief, relax)
+        problems = run_checks(copy, vbrief, relax)
         if problems:
             for problem in problems:
                 st.warning(problem)
             if st.button("🔧 Fix these problems", key=f"fix_{idx}"):
                 with st.spinner("Fixing..."):
-                    fix = auto_fix_many(brief, [copy], fix_fn, 2, relax=relax)[0]
+                    fix = auto_fix_many(vbrief, [copy], fix_fn, 2, relax=relax)[0]
                 if fix.error:
                     st.error(fix.error)
                 elif fix.text == copy:
@@ -263,11 +273,19 @@ if result:
                 else:
                     tail = "" if fix.fixed else " (some issues remain)"
                     result["versions"].append(
-                        {"text": fix.text, "note": f"Fixed from version {n}{tail}", "relax": relax})
-                    log_followup(brief, result["versions"][-1])
+                        {"text": fix.text, "note": f"Fixed from version {n}{tail}", "relax": relax,
+                         "brief": vbrief, "alternates": []})
+                    log_followup(vbrief, result["versions"][-1])
                     st.rerun()
         else:
             st.caption("✅ Passed all automatic checks")
+
+        others = item.get("alternates", [])
+        if others and st.button(f"Show another option ({len(others)} left)", key=f"alt_{idx}"):
+            result["versions"].append({"text": others.pop(0), "note": f"Another option from version {n}",
+                                       "relax": "", "brief": vbrief, "alternates": []})
+            log_note(f"User asked for another option (from version {n}, {vbrief.tone})")
+            st.rerun()
 
         with st.expander(f"Refine version {n}"):
             action = st.selectbox("What should change?", list(REFINE_ACTIONS), key=f"ra_{idx}")
@@ -282,28 +300,21 @@ if result:
                 if not instruction:
                     st.warning("Please describe the change first.")
                 else:
-                    system, user = build_refine_prompt(brief, copy, instruction)
+                    system, user = build_refine_prompt(vbrief, copy, instruction)
                     try:
                         with st.spinner("Refining..."):
-                            text = ai(system, user, creativity)
+                            text = ai(system, user, CREATIVITY)
                         revised = parse_versions(text)
                         if revised:
                             label = new_tone and f"{action}: {new_tone}" or action
                             new_text = revised[0]
                             new_relax = REFINE_RELAX.get(action, "")
                             note = f"Refined from version {n} ({label})"
-                            if autofix_tries:
-                                with st.spinner("Checking..."):
-                                    fix = auto_fix_many(brief, [new_text], fix_fn, autofix_tries,
-                                                        relax=new_relax, keep=instruction)[0]
-                                new_text = fix.text
-                                if fix.fixed:
-                                    note += ", auto-fixed"
-                                elif fix.attempts:
-                                    note += f", auto-fix tried {fix.attempts}x"
+                            new_text = auto_fix_many(vbrief, [new_text], fix_fn, 0)[0].text  # free fixes only
                             result["versions"].append(
-                                {"text": new_text, "note": note, "relax": new_relax})
-                            log_followup(brief, result["versions"][-1])
+                                {"text": new_text, "note": note, "relax": new_relax,
+                                 "brief": vbrief, "alternates": []})
+                            log_followup(vbrief, result["versions"][-1])
                             st.rerun()
                         else:
                             st.error("The AI returned nothing. Try again.")
@@ -318,11 +329,11 @@ if result:
                 if st.form_submit_button("Save review"):
                     row = {
                         "time": datetime.now().isoformat(timespec="seconds"),
-                        "copy_type": result_type.label, "format": brief.format,
-                        "platform": brief.platform,
-                        "product": brief.product, "audience": brief.audience,
-                        "qualities": " | ".join(brief.qualities_clean), "offer": brief.offer,
-                        "language": brief.language, "length": brief.length, "tone": brief.tone,
+                        "copy_type": result_type.label, "format": vbrief.format,
+                        "platform": vbrief.platform,
+                        "product": vbrief.product, "audience": vbrief.audience,
+                        "qualities": " | ".join(vbrief.qualities_clean), "offer": vbrief.offer,
+                        "language": vbrief.language, "length": vbrief.length, "tone": vbrief.tone,
                         "version_note": item["note"], "script": copy, "rating": rating,
                         "whats_weak": weak, "expert_rewrite": rewrite,
                     }

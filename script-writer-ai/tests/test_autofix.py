@@ -154,3 +154,9 @@ def test_quick_fix_replaces_em_dashes_for_free():
     gen = Gen()
     res = auto_fix(BRIEF, GOOD.replace("so your", "\u2014 so your"), gen, max_attempts=2)
     assert res.fixed and res.attempts == 0 and not gen.calls and "\u2014" not in res.text
+
+
+def test_quick_fix_leaves_no_stray_space_before_punctuation():
+    cap = Brief(product="x", audience="y", qualities=["z"], copy_type="caption",
+                toggles={"emojis": False, "hashtags": False})
+    assert quick_fix("Cold \U0001F60E #cold, wow \u2014 really.", cap) == "Cold, wow, really."

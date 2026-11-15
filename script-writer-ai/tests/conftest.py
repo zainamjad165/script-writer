@@ -17,6 +17,8 @@ def isolated_from_real_services(monkeypatch):
     monkeypatch.setenv("GEMINI_MODEL", "gemini-flash-lite-latest")
     monkeypatch.setenv("GEMINI_FALLBACK_MODELS", "gemini-flash-latest")
 
+    monkeypatch.setattr("llm._UNAVAILABLE", set())   # no model stays "missing" across tests
+
     def blocked(*args, **kwargs):
         raise AssertionError("A test tried to make a real network request.")
 

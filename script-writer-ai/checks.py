@@ -387,3 +387,22 @@ def run_checks(text: str, brief: Brief, relax: str = "") -> list:
         out.append("It contains words you asked to avoid: " + ", ".join(hits) + ".")
 
     return out
+
+
+def rank_versions(texts: list, brief: Brief, relax: str = "") -> list:
+    """Indices of `texts`, best first.
+
+    "Best" means: fewest problems found by the automatic checks, then closest to the middle of
+    the word target, then the AI's own order. The checks can verify rules, not taste."""
+    ct = get_copy_type(brief.copy_type)
+    platform = brief.platform if brief.platform in ct.platforms else ct.platforms[0]
+    target = ct.word_ranges.get(brief.length)
+    middle = (target[0] + target[1]) / 2 if target and platform != "Google search ad" else 0
+
+    def key(i: int) -> tuple:
+        text = texts[i]
+        measured = spoken_text(text, brief) if ct.key == "script" else _body(text, ct.key, platform)
+        gap = abs(_words(measured) - middle) / middle if middle else 0.0
+        return (len(run_checks(text, brief, relax)), gap, i)
+
+    return sorted(range(len(texts)), key=key)

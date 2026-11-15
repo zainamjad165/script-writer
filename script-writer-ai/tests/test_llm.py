@@ -85,3 +85,34 @@ def test_duplicate_fallback_is_skipped():
     with pytest.raises(LLMError):
         generate("s", "u", "K", model="a", fallback_models=["a"], session=s)
     assert len(s.calls) == 1
+
+
+def test_a_missing_model_switches_to_the_backup_and_is_remembered():
+    import llm
+    s = FakeSession(FakeResp(404, {"error": {"message": "not found"}}), FakeResp(200, OK),   # first call
+                    FakeResp(200, OK))                                                      # second call
+    assert generate("s", "u", "K", model="old-model", fallback_models=["new-model"], session=s) == "Hello? World"
+    assert "old-model" in s.calls[0][0] and "new-model" in s.calls[1][0]
+    assert "old-model" in llm._UNAVAILABLE
+    generate("s", "u", "K", model="old-model", fallback_models=["new-model"], session=s)
+    assert "new-model" in s.calls[2][0] and len(s.calls) == 3          # the missing model was skipped
+
+
+def test_when_every_model_is_missing_the_developer_message_is_shown():
+    s = FakeSession(FakeResp(404, {}), FakeResp(404, {}))
+    with pytest.raises(LLMError, match="update the model name") as info:
+        generate("s", "u", "K", model="a", fallback_models=["b"], session=s)
+    assert info.value.model_missing
+
+
+def test_messages_no_longer_point_at_a_sidebar_that_does_not_exist():
+    for status in (404, 429):
+        with pytest.raises(LLMError) as info:
+            generate("s", "u", "K", session=FakeSession(FakeResp(status, {})))
+        assert "sidebar" not in str(info.value)
+
+
+def test_a_rate_limit_then_a_missing_model_still_finds_a_working_one():
+    s = FakeSession(FakeResp(429, {}), FakeResp(404, {}), FakeResp(200, OK))
+    assert generate("s", "u", "K", model="a", fallback_models=["b", "c"], session=s) == "Hello? World"
+    assert len(s.calls) == 3

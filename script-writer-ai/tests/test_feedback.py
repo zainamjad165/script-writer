@@ -244,3 +244,9 @@ def test_chunking_still_handles_text_without_blank_lines_or_with_one_huge_paragr
     chunks = chunk_text(lines, 500)
     assert all(len(c) <= 500 for c in chunks) and "\n".join(chunks) == lines
     assert [len(c) for c in chunk_text("y" * 1200, 500)] == [500, 500, 200]
+
+
+def test_note_messages_are_one_clean_line():
+    from feedback import note_messages
+    msgs = note_messages("a1b2c3", "User asked for another option @everyone")
+    assert len(msgs) == 1 and "#a1b2c3" in msgs[0] and "@everyone" not in msgs[0]
